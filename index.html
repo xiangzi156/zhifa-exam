@@ -388,7 +388,7 @@ textarea.adm:focus{outline:none;border-color:var(--navy2)}
       </div>
       <div class="go" onclick="startRound({mode:'mock'})">
         <div class="l"><div class="ic" style="background:#EDF3FA">📝</div>
-          <div><b>模拟测试</b><div class="sub">随机 20 题 · 百分制计分 · 计时</div></div></div>
+          <div><b>模拟测试</b><div class="sub">判断30+单选30+多选20 · 每题1分 · 计时</div></div></div>
         <div class="ar">›</div>
       </div>
     </div>
@@ -491,7 +491,7 @@ var BANK = [{"id":"j1","type":"judge","stem":"实施行政处罚，纠正违法�
 var CLOUD_CFG = {"endpoint":"https://zhifa-exam.app.workbuddy.host","publishableKey":"wbpk_8ZXRoqYcl4VcxR1dTKRrkn_YJngK1S83bvpqkEetoFKlPGMIodgjjQD"};
 
 var DEPTS = ["岳阳楼一大队","岳阳楼二大队","岳阳楼三大队","岳阳楼四大队",
-             "站场执法大队","君山大队","直属大队","机关科室","其他（手动填写）"];
+             "站场执法大队","君山大队","云溪大队","住建大队","机关科室","其他（手动填写）"];
 
 var IVL_RIGHT = [1,2,4,7,15,30,60];              /* 答对后：1/2/4/7/15/30/60 天 */
 var IVL_WRONG = [20,10,5];                       /* 答错后：第1次20分钟、第2次10分钟、第3次起5分钟 */
@@ -640,9 +640,13 @@ function dueList(){
   return out;
 }
 function wrongQueue(){
+  /* 排序：①已到遗忘曲线复习时间的错题最优先 → ②错误次数多者优先 → ③复习时间早者优先 */
+  var now = Date.now();
   var out = BANK.filter(function(q){ var r=S.rec[q.id]; return r && r.w>0; });
   out.sort(function(a,b){
     var ra=S.rec[a.id], rb=S.rec[b.id];
+    var da = ra.d<=now ? 0 : 1, db = rb.d<=now ? 0 : 1;
+    if(da!==db) return da-db;
     if(rb.w!==ra.w) return rb.w-ra.w;
     return (ra.d||0)-(rb.d||0);
   });
@@ -687,9 +691,16 @@ function buildRound(opts){
     return {qs: pool.slice(0, Math.min(n, pool.length)), title: TYPE_CN[opts.t]+'专练'};
   }
   if(opts.mode==='mock'){
-    var sh = BANK.slice(); 
-    for(var i=sh.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=sh[i]; sh[i]=sh[j]; sh[j]=t; }
-    return {qs: sh.slice(0,20), title:'模拟测试', mock:true};
+    /* 模拟测试 · 卷面满分 100：判断30×1 + 单选30×1 + 多选20×1 + 分析2×10。
+       分析题库后期补充，当前仅出客观题 80 分（每题 1 分）。 */
+    function pickN(type, n){
+      var a = BANK.filter(function(q){ return q.type===type; });
+      for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i]; a[i]=a[j]; a[j]=t; }
+      return a.slice(0, n);
+    }
+    var qs = pickN('judge',30).concat(pickN('single',30), pickN('multi',20));
+    if(!qs.length) return {err:'题库为空，请检查数据'};
+    return {qs: qs, title:'模拟测试', mock:true};
   }
   /* 默认：到期复习题 + 未做过的题 + 兜底 */
   var now = Date.now();
@@ -791,7 +802,9 @@ function refreshHome(){
     return '<div class="notice '+x.c+'"><div>'+x.t+'</div></div>';
   }).join('');
 
-  $('g-wrongsub').textContent = wrong? ('当前有 '+wrong+' 道错题，按错误次数优先推送') : '当前没有错题';
+  var wrongDue = 0, _now = Date.now();
+  BANK.forEach(function(q){ var r=S.rec[q.id]; if(r && r.w>0 && r.d<=_now) wrongDue++; });
+  $('g-wrongsub').textContent = wrong? ('当前有 '+wrong+' 道错题'+(wrongDue?('，'+wrongDue+' 道已到复习时间'):'')+'，按遗忘曲线到期优先推送') : '当前没有错题';
 
   /* 刷新/关页后可续做 */
   var pend = pendingRound();
@@ -960,16 +973,35 @@ function nextQ(){
 function showResult(){
   var R = S.round;
   var used = Math.round((Date.now()-R.t0)/1000);
-  var n = R.qs.length, score = Math.round(R.right/n*100);
-  var lvl = score>=90?'优秀':score>=80?'良好':score>=60?'合格':'需加强';
+  var n = R.qs.length, score, sub, pct = n?Math.round(R.right/n*100):0;
+  var lvl = pct>=90?'优秀':pct>=80?'良好':pct>=60?'合格':'需加强';
+  if(R.mock){
+    /* 满分 100 构成：判断30×1 + 单选30×1 + 多选20×1 + 分析2×10；
+       分析题库待补充，本次仅计客观题 80 分（每题 1 分） */
+    score = R.right;
+    sub = '客观题 '+n+' 题 · 用时 '+Math.floor(used/60)+'′'+pad(used%60)+'″ · '+lvl
+        + '<br><span style="font-size:11.5px;opacity:.85">卷面构成：判断30×1 + 单选30×1 + 多选20×1 + 分析题2×10（分析题库补充后计入，满分 100）</span>';
+  }else{
+    score = pct;
+    sub = R.title+' · 共 '+n+' 题 · 用时 '+Math.floor(used/60)+'′'+pad(used%60)+'″ · '+lvl;
+  }
   $('rs-hero').innerHTML = '<div class="score-hero">'
     + '<div class="n">'+score+'<small> 分</small></div>'
-    + '<p>'+R.title+' · 共 '+n+' 题 · 用时 '+Math.floor(used/60)+'′'+pad(used%60)+'″ · '+lvl+'</p>'
+    + '<p>'+sub+'</p>'
     + '<div class="chips"><span>答对 '+R.right+'</span><span>答错 '+R.wrong+'</span>'
-    + '<span>正确率 '+(n?Math.round(R.right/n*100):0)+'%</span></div></div>';
+    + '<span>正确率 '+pct+'%</span></div></div>';
 
-  var wrongs = R.log.filter(function(x){ return x && !x.ok; });
   var body = '';
+  if(R.mock){
+    var byT = {judge:{n:0,r:0}, single:{n:0,r:0}, multi:{n:0,r:0}};
+    R.log.forEach(function(x){ var q=QMAP[x.id]; if(byT[q.type]){ byT[q.type].n++; if(x.ok) byT[q.type].r++; } });
+    body += '<div class="card"><div class="sec-t">题型得分（每题 1 分）</div>'
+      + '<div class="stat-l"><span>判断题</span><b>'+byT.judge.r+' / '+byT.judge.n+'</b></div>'
+      + '<div class="stat-l"><span>单选题</span><b>'+byT.single.r+' / '+byT.single.n+'</b></div>'
+      + '<div class="stat-l"><span>多选题</span><b>'+byT.multi.r+' / '+byT.multi.n+'</b></div>'
+      + '<div class="stat-l"><span>分析题</span><b style="color:#8a6d1f">待题库补充（2×10=20 分）</b></div></div>';
+  }
+  var wrongs = R.log.filter(function(x){ return x && !x.ok; });
   if(wrongs.length){
     body += '<div class="card"><div class="sec-t">本次错题（'+wrongs.length+' 题，已自动标记）</div><div class="wlist">';
     wrongs.forEach(function(w,i){
@@ -1018,7 +1050,10 @@ function toggleAllWrong(){
 }
 function renderWrongs(){
   var list = wrongQueue();
-  $('w-sub').textContent = list.length? ('共 '+list.length+' 道错题 · 按错误次数从高到低排列') : '当前没有错题';
+  var dueN = list.filter(function(q){ return S.rec[q.id].d<=Date.now(); }).length;
+  $('w-sub').textContent = list.length
+    ? ('共 '+list.length+' 道错题'+(dueN?(' · '+dueN+' 道已到复习时间'):'')+' · 按遗忘曲线到期+错误次数排序')
+    : '当前没有错题';
   if(!list.length){
     $('w-list').innerHTML = '<div class="empty"><span class="ic">🎉</span>还没有错题记录<br>继续保持，做完的题会按遗忘曲线自动安排复习</div>';
     return;
@@ -1030,11 +1065,12 @@ function renderWrongs(){
                  var o=q.opts.filter(function(x){return x.k===k;})[0];
                  return k+(o?('、'+esc(o.t)):'');
                }).join('　');
+    var dueTxt = r.d<=Date.now() ? '<b style="color:#B32525">已到复习时间</b>' : fmtGap(r.d-Date.now());
     return '<div class="wcard'+(wAllOpen?' open':'')+'" onclick="this.classList.toggle(\'open\')">'
       + '<div class="h"><span class="pill '+TYPE_P[q.type]+'">'+TYPE_CN[q.type]+'</span>'
       + '<span class="pill badge-w'+(r.w>=2?' d2':'')+'">错 '+r.w+' 次</span>'
       + '<span class="pill '+(isMastered(q.id)?'p-s':'tag-w')+'">'+(isMastered(q.id)?'已掌握':'待巩固')+'</span>'
-      + '<span style="flex:1"></span><span class="muted">'+fmtGap(r.d-Date.now())+'</span></div>'
+      + '<span style="flex:1"></span><span class="muted">'+dueTxt+'</span></div>'
       + '<div class="q">'+esc(q.stem)+'</div>'
       + '<div class="a">正确答案：<b>'+aTxt+'</b><br>累计作答 '+r.s+' 次 · 答错 '+r.w+' 次 · 连续答对 '+r.k+' 次</div>'
       + '</div>';
