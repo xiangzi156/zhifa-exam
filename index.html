@@ -288,6 +288,12 @@ textarea.adm:focus{outline:none;border-color:var(--navy2)}
 .cl-dot.ok{background:#2E9E5B;box-shadow:0 0 0 3px rgba(46,158,91,.16)}
 .cl-dot.no{background:#D64545;box-shadow:0 0 0 3px rgba(214,69,69,.16)}
 .adm-alt{margin-top:10px;padding-top:11px;border-top:1px dashed #DCE4EE}
+.expbox{margin-top:10px;background:rgba(255,255,255,.72);border:1px solid #E3E8F2;border-radius:12px;overflow:hidden}
+.expbox .exph{font-size:12.5px;font-weight:700;color:var(--navy2);padding:10px 12px;display:flex;justify-content:space-between;align-items:center}
+.expbox .exph span{font-weight:400;font-size:11px;color:var(--sub)}
+.expbox .expb{display:none;font-size:12.5px;line-height:1.75;color:var(--txt);padding:0 12px 11px}
+.expbox.open .expb{display:block}
+.expbox .expb b{display:inline-block;color:#fff;background:var(--navy2);border-radius:6px;font-size:11px;padding:1px 7px;margin-right:6px;font-weight:600}
 </style>
 </head>
 <body>
@@ -362,7 +368,7 @@ textarea.adm:focus{outline:none;border-color:var(--navy2)}
       <div id="h-notice"></div>
 
       <div class="grid2" id="h-quick"></div>
-      <button class="btn" id="h-start" onclick="startRound()">开始今日练习</button>
+      <button class="btn" id="h-start" onclick="startRound()">开始每日任务</button>
       <div class="muted" style="text-align:center;margin:9px 0 14px" id="h-startHint"></div>
 
       <div class="sec-t">专项训练</div>
@@ -388,7 +394,7 @@ textarea.adm:focus{outline:none;border-color:var(--navy2)}
       </div>
       <div class="go" onclick="startRound({mode:'mock'})">
         <div class="l"><div class="ic" style="background:#EDF3FA">📝</div>
-          <div><b>模拟测试</b><div class="sub">判断30+单选30+多选20 · 每题1分 · 计时</div></div></div>
+          <div><b>模拟测试</b><div class="sub">判断20×1.5+单选20×1.5+多选10×2 · 满分100 · 计时</div></div></div>
         <div class="ar">›</div>
       </div>
     </div>
@@ -501,7 +507,7 @@ var QMAP = {}; BANK.forEach(function(q){ QMAP[q.id]=q; });
 var TYPE_CN = {judge:'判断题', single:'单选题', multi:'多选题'};
 var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m'};
 
-var S = { user:null, rec:{}, daily:{}, cfg:{perRound:8, goal:20, remember:true}, round:null, idx:0 };
+var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
 
@@ -587,7 +593,10 @@ function doLogin(){
   S.rec = lsGet(keyRec(), {});
   S.daily = lsGet(keyDay(), {});
   var g = lsGet('cgks_cfg_'+id, null);
-  S.cfg = g || {perRound:8, goal:20, remember:S.cfg.remember};
+  S.cfg = g || {perRound:10, goal:50, remember:S.cfg.remember};
+  /* 迁移：每组统一 10 题，每日目标改为按组（5 组 = 50 题） */
+  if(S.cfg.perRound === 8) S.cfg.perRound = 10;
+  if(S.cfg.goal === 20) S.cfg.goal = 50;
   if(!S.cfg.perRound) S.cfg.perRound = 8;
   if(!S.cfg.goal) S.cfg.goal = 20;
 
@@ -657,7 +666,7 @@ function wrongQueue(){
 function pickBalanced(pool, n){
   var b = {judge:[], single:[], multi:[]};
   pool.forEach(function(q){ if(b[q.type]) b[q.type].push(q); });
-  var pattern = ['judge','single','single','multi'], out=[];
+  var pattern = ['judge','single','multi','judge','single','multi','judge','single','single','multi'], out=[];
   while(out.length<n){
     var added = false;
     for(var i=0;i<pattern.length && out.length<n;i++){
@@ -691,18 +700,18 @@ function buildRound(opts){
     return {qs: pool.slice(0, Math.min(n, pool.length)), title: TYPE_CN[opts.t]+'专练'};
   }
   if(opts.mode==='mock'){
-    /* 模拟测试 · 卷面满分 100：判断30×1 + 单选30×1 + 多选20×1 + 分析2×10。
-       分析题库后期补充，当前仅出客观题 80 分（每题 1 分）。 */
+    /* 模拟测试 · 卷面满分 100：判断20×1.5 + 单选20×1.5 + 多选10×2 + 图文10×2。
+       图文题库后期补充，当前仅出客观题 80 分。 */
     function pickN(type, n){
       var a = BANK.filter(function(q){ return q.type===type; });
       for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i]; a[i]=a[j]; a[j]=t; }
       return a.slice(0, n);
     }
-    var qs = pickN('judge',30).concat(pickN('single',30), pickN('multi',20));
+    var qs = pickN('judge',20).concat(pickN('single',20), pickN('multi',10));
     if(!qs.length) return {err:'题库为空，请检查数据'};
     return {qs: qs, title:'模拟测试', mock:true};
   }
-  /* 默认：到期复习题 + 未做过的题 + 兜底 */
+  /* 默认（每日任务）：①优先全新未做过的题 → ②新题做完一遍后，出曾做过的题并按遗忘曲线（到期优先）→ ③兜底 */
   var now = Date.now();
   var due=[], neu=[], rest=[];
   BANK.forEach(function(q){
@@ -718,11 +727,11 @@ function buildRound(opts){
   });
   neu.sort(function(a,b){ return a.gid-b.gid; });
   rest.sort(function(a,b){ return S.rec[a.id].d - S.rec[b.id].d; });
-  pool = due.concat(neu);
+  pool = neu.concat(due);
   if(pool.length < n) pool = pool.concat(rest.slice(0, n-pool.length));
   var qs = pickBalanced(pool, Math.min(n, pool.length));
   if(!qs.length) return {err:'题库为空，请检查数据'}
-  return {qs: qs, title:'今日练习'};
+  return {qs: qs, title:'每日任务'};
 }
 
 /* ---------------- 路由 ---------------- */
@@ -783,7 +792,7 @@ function refreshHome(){
   var quick = [
     {b:td.n, s:'今日已练'},
     {b:due, s:'待复习题'},
-    {b:Math.max(0,S.cfg.goal-td.n), s:'距今日目标'},
+    {b:(td.g||0)+'/'+5, s:'今日组数·达标5'},
     {b:wrong, s:'错题待巩固'}
   ];
   $('h-quick').innerHTML = quick.map(function(x,i){
@@ -793,10 +802,15 @@ function refreshHome(){
 
   /* 提醒区 */
   var notice = [];
-  if(!td.n) notice.push({c:'warn', t:'<b>今天还没有开始练习哦。</b>建议先做 '+n+' 题，约 '+Math.max(2,Math.round(n*0.7))+' 分钟。'});
-  if(due>0) notice.push({c:'navy', t:'按遗忘曲线，<b>有 '+due+' 道题到了复习时间</b>，优先安排复习效果最好。'});
+  var gN = td.g||0;
+  if(gN>=10) notice.push({c:'ok', t:'🔥 <b>学习之星！</b>今日已完成 '+gN+' 组（'+td.n+' 题），远超 5 组目标，题库快被你刷穿了！'});
+  else if(gN>=7) notice.push({c:'ok', t:'💪 <b>超额完成！</b>今日 '+gN+' 组，比目标多 '+(gN-5)+' 组。多练一遍，遗忘曲线推得更远！'});
+  else if(gN>=5) notice.push({c:'ok', t:'✅ <b>今日 5 组目标已达成！</b>已练 '+td.n+' 题。再做一组巩固更牢，鼓励继续！'});
+  else if(gN>0) notice.push({c:'warn', t:'今日已完成 <b>'+gN+' 组</b>（每组 10 题），还差 <b>'+(5-gN)+' 组</b>达标，加油！'});
+  if(!td.n) notice.push({c:'warn', t:'<b>今天还没有开始练习哦。</b>每天 5 组（每组 10 题），优先刷新题，效果最好。'});
+  if(due>0) notice.push({c:'navy', t:'按遗忘曲线，<b>有 '+due+' 道题到了复习时间</b>，新题刷完后优先安排复习效果最好。'});
   if(wrong>0) notice.push({c:'bad', t:'错题本还有 <b>'+wrong+' 道题</b>未改正，建议做一轮「错题强化」。'});
-  if(td.n && due===0 && wrong===0) notice.push({c:'ok', t:'<b>状态很好！</b>今日已完成 '+td.n+' 题，暂无待复习题。'});
+  if(td.n && due===0 && wrong===0 && gN>=5) notice.push({c:'ok', t:'<b>状态很好！</b>今日 '+gN+' 组全部完成，暂无待复习题。'});
   if(seen===total && total>0) notice.push({c:'ok', t:'<b>全题库已通刷一遍！</b>现在进入按遗忘曲线循环巩固阶段。'});
   $('h-notice').innerHTML = notice.slice(0,3).map(function(x){
     return '<div class="notice '+x.c+'"><div>'+x.t+'</div></div>';
@@ -813,9 +827,9 @@ function refreshHome(){
     $('h-start').setAttribute('onclick','resumeRound()');
     $('h-startHint').innerHTML = '<span style="color:#C2760A">上次「'+pend.data.title+'」还没做完，可直接续做</span>';
   }else{
-    $('h-start').textContent = td.n? '继续练习（第 '+(Math.floor(td.n/n)+1)+' 组）' : '开始今日练习';
+    $('h-start').textContent = td.n? '继续每日任务（今日第 '+((td.g||0)+1)+' 组）' : '开始每日任务（第 1 组）';
     $('h-start').setAttribute('onclick','startRound()');
-    $('h-startHint').textContent = '每组 '+n+' 题，约 '+Math.max(2,Math.round(n*0.7))+' 分钟 · 今日目标 '+S.cfg.goal+' 题';
+    $('h-startHint').textContent = '每组 '+n+' 题（判断3+单选4+多选3），优先新题、新题刷完按遗忘曲线复习 · 今日目标 5 组';
   }
   shadeTab();
 }
@@ -948,10 +962,18 @@ function finishAnswer(chosen){
     meta += '。将在 ' + fmtGap(r.d-Date.now()) + '再次推送复习，直到连续答对 2 次视为掌握。';
   }
   var qt = $('qtype'); if(qt) qt.innerHTML = qtypeTag(q);
+  var expHtml = '';
+  if(q.exp || q.ref){
+    expHtml = '<div class="expbox" onclick="this.classList.toggle(\'open\')">'
+      + '<div class="exph">📖 解析与条文依据<span>点击展开 / 收起</span></div>'
+      + (q.exp? '<div class="expb"><b>解析</b>'+esc(q.exp)+'</div>':'')
+      + (q.ref? '<div class="expb"><b>条文依据</b>'+esc(q.ref)+'</div>':'')
+      + '</div>';
+  }
   $('fb').innerHTML = '<div class="fb '+(ok?'ok':'no')+'">'
     + '<div class="h">'+(ok?'✅ 回答正确':'❌ 回答错误')+'</div>'
     + (ok? '' : '<div class="ans">正确答案：<b>'+ansTxt+'</b></div>')
-    + '<div class="meta">'+meta+'</div></div>';
+    + '<div class="meta">'+meta+'</div></div>' + expHtml;
 
   $('qz-submit').style.display='none';
   $('qz-next').style.display='block';
@@ -970,20 +992,28 @@ function nextQ(){
   R.i++; renderQ();
   cloudPushSoon();
 }
+/* 模拟测试计分：判断20×1.5 + 单选20×1.5 + 多选10×2 = 80 分（图文题 10×2=20 待补充，满分 100） */
+function mockScore(log){
+  var byT = {judge:{n:0,r:0}, single:{n:0,r:0}, multi:{n:0,r:0}, img:{n:0,r:0}};
+  log.forEach(function(x){ var q=QMAP[x.id]; if(q && byT[q.type]){ byT[q.type].n++; if(x.ok) byT[q.type].r++; } });
+  var s = byT.judge.r*1.5 + byT.single.r*1.5 + byT.multi.r*2 + (byT.img.n? byT.img.r*2 : 0);
+  return {s:s, byT:byT};
+}
+function fmtScore(v){ v = Math.round(v*10)/10; return (v % 1 === 0) ? String(Math.round(v)) : v.toFixed(1); }
 function showResult(){
   var R = S.round;
   var used = Math.round((Date.now()-R.t0)/1000);
   var n = R.qs.length, score, sub, pct = n?Math.round(R.right/n*100):0;
-  var lvl = pct>=90?'优秀':pct>=80?'良好':pct>=60?'合格':'需加强';
+  var lvl = function(p){ return p>=90?'优秀':p>=80?'良好':p>=60?'合格':'需加强'; };
   if(R.mock){
-    /* 满分 100 构成：判断30×1 + 单选30×1 + 多选20×1 + 分析2×10；
-       分析题库待补充，本次仅计客观题 80 分（每题 1 分） */
-    score = R.right;
-    sub = '客观题 '+n+' 题 · 用时 '+Math.floor(used/60)+'′'+pad(used%60)+'″ · '+lvl
-        + '<br><span style="font-size:11.5px;opacity:.85">卷面构成：判断30×1 + 单选30×1 + 多选20×1 + 分析题2×10（分析题库补充后计入，满分 100）</span>';
+    var ms = mockScore(R.log);
+    score = fmtScore(ms.s);
+    pct = Math.round(ms.s/80*100); /* 当前卷面客观题满分 80（图文题补充后按 100 计） */
+    sub = '客观题 '+n+' 题 · 用时 '+Math.floor(used/60)+'′'+pad(used%60)+'″ · '+lvl(pct)
+        + '<br><span style="font-size:11.5px;opacity:.85">卷面构成：判断20×1.5 + 单选20×1.5 + 多选10×2 = 80 分；图文题 10×2=20 分待题库补充后计入（届时满分 100）</span>';
   }else{
     score = pct;
-    sub = R.title+' · 共 '+n+' 题 · 用时 '+Math.floor(used/60)+'′'+pad(used%60)+'″ · '+lvl;
+    sub = R.title+' · 共 '+n+' 题 · 用时 '+Math.floor(used/60)+'′'+pad(used%60)+'″ · '+lvl(pct);
   }
   $('rs-hero').innerHTML = '<div class="score-hero">'
     + '<div class="n">'+score+'<small> 分</small></div>'
@@ -993,13 +1023,12 @@ function showResult(){
 
   var body = '';
   if(R.mock){
-    var byT = {judge:{n:0,r:0}, single:{n:0,r:0}, multi:{n:0,r:0}};
-    R.log.forEach(function(x){ var q=QMAP[x.id]; if(byT[q.type]){ byT[q.type].n++; if(x.ok) byT[q.type].r++; } });
-    body += '<div class="card"><div class="sec-t">题型得分（每题 1 分）</div>'
-      + '<div class="stat-l"><span>判断题</span><b>'+byT.judge.r+' / '+byT.judge.n+'</b></div>'
-      + '<div class="stat-l"><span>单选题</span><b>'+byT.single.r+' / '+byT.single.n+'</b></div>'
-      + '<div class="stat-l"><span>多选题</span><b>'+byT.multi.r+' / '+byT.multi.n+'</b></div>'
-      + '<div class="stat-l"><span>分析题</span><b style="color:#8a6d1f">待题库补充（2×10=20 分）</b></div></div>';
+    var ms2 = mockScore(R.log), bt = ms2.byT;
+    body += '<div class="card"><div class="sec-t">题型得分</div>'
+      + '<div class="stat-l"><span>判断题</span><b>'+fmtScore(bt.judge.r*1.5)+' / 30（答对 '+bt.judge.r+' / '+bt.judge.n+' 题）</b></div>'
+      + '<div class="stat-l"><span>单选题</span><b>'+fmtScore(bt.single.r*1.5)+' / 30（答对 '+bt.single.r+' / '+bt.single.n+' 题）</b></div>'
+      + '<div class="stat-l"><span>多选题</span><b>'+fmtScore(bt.multi.r*2)+' / 20（答对 '+bt.multi.r+' / '+bt.multi.n+' 题）</b></div>'
+      + '<div class="stat-l"><span>图文题</span><b style="color:#8a6d1f">待题库补充（10×2=20 分）</b></div></div>';
   }
   var wrongs = R.log.filter(function(x){ return x && !x.ok; });
   if(wrongs.length){
@@ -1034,6 +1063,11 @@ function showResult(){
                 + (x.ok?'border-color:#B7E7D1;background:#E6F7EF;color:#0E7E58':'border-color:#F6C6C6;background:#FDEDED;color:#B32525')
                 + '">'+(i+1)+'. '+TYPE_CN[q.type].slice(0,2)+(x.ok?' ✓':' ✗')+'</span>';
          }).join('') + '</div></div>';
+  /* 完成一组：计入今日组数（用于每日 5 组目标与鼓励提示） */
+  var dk = dayKey();
+  if(!S.daily[dk]) S.daily[dk] = {n:0, r:0};
+  S.daily[dk].g = (S.daily[dk].g||0)+1;
+  saveDay();
   $('rs-body').innerHTML = body;
   S.round = null;
   clearRound();
@@ -1073,6 +1107,7 @@ function renderWrongs(){
       + '<span style="flex:1"></span><span class="muted">'+dueTxt+'</span></div>'
       + '<div class="q">'+esc(q.stem)+'</div>'
       + '<div class="a">正确答案：<b>'+aTxt+'</b><br>累计作答 '+r.s+' 次 · 答错 '+r.w+' 次 · 连续答对 '+r.k+' 次</div>'
+      + ((q.exp||q.ref)? '<div class="a"><b>📖 学懂弄通</b>'+(q.exp?('<br>解析：'+esc(q.exp)):'')+(q.ref?((q.exp?'<br>':'')+'条文依据：'+esc(q.ref)):'')+'</div>' : '')
       + '</div>';
   }).join('');
 }
@@ -1652,7 +1687,9 @@ function cloudPull(silent){
     S.user = cur;
     S.rec = lsGet(keyRec(), {});
     S.daily = lsGet(keyDay(), {});
-    S.cfg = lsGet('cgks_cfg_'+cur.id, null) || {perRound:8, goal:20, remember:true};
+    S.cfg = lsGet('cgks_cfg_'+cur.id, null) || {perRound:10, goal:50, remember:true};
+    if(S.cfg.perRound === 8) S.cfg.perRound = 10;
+    if(S.cfg.goal === 20) S.cfg.goal = 50;
     $('i-name').value = cur.name;
     $('i-id').value = cur.id;
     if(DEPTS.indexOf(cur.dept)>=0) $('i-dept').value = cur.dept;
