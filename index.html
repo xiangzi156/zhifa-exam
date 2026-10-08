@@ -355,6 +355,7 @@ table.lt tr.top10 td:first-child{color:#9A6A00}
         <div class="muted" style="margin-top:10px;line-height:1.7">
           温馨提示：每日利用休息时间完成 8~10 题，约 6 分钟即可。系统按遗忘曲线自动安排复习，做错的题会反复出现直到掌握。
         </div>
+        <div class="muted" style="margin-top:6px;font-size:11px;text-align:center">版本 <span id="app-ver"></span></div>
       </div>
       <div class="adm-entry" onclick="ADM.exited=false;go('admin')">管理员入口 · <b>查看全员学习进度与成绩</b></div>
     </div>
@@ -411,7 +412,7 @@ table.lt tr.top10 td:first-child{color:#9A6A00}
       </div>
       <div class="go" onclick="startRound({mode:'mock'})">
         <div class="l"><div class="ic" style="background:#EDF3FA">📝</div>
-          <div><b>模拟测试</b><div class="sub">判断20×1.5+单选20×1.5+多选10×2+识图10×2 · 满分100 · 交卷后出分</div></div></div>
+          <div><b>测试</b><div class="sub">判断20×1.5+单选20×1.5+多选10×2+识图10×2 · 满分100 · 交卷后出分</div></div></div>
         <div class="ar">›</div>
       </div>
     </div>
@@ -527,6 +528,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
+var APP_VER = '2026.10.08-1602';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -539,6 +541,10 @@ function keyDay(){ return 'cgks_day_' + S.user.id; }
 function keyRound(){ return 'cgks_round_' + S.user.id; }
 function saveRec(){ lsSet(keyRec(), S.rec); }
 function saveDay(){ lsSet(keyDay(), S.daily); }
+function shuffle(a){ for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i]; a[i]=a[j]; a[j]=t; } return a; }
+/* 测试历史（本地，统计页展示） */
+function examHisGet(){ return lsGet('cgks_exam_his', []); }
+function examHisSave(h){ lsSet('cgks_exam_his', h); }
 /* 未完成的本轮练习落盘：刷新/关掉页面后可继续，不丢进度 */
 function saveRound(){
   if(!S.round){ try{ localStorage.removeItem(keyRound()); }catch(e){} return; }
@@ -587,6 +593,7 @@ function deepInit(){
   $('bi-s').textContent = BANK.filter(function(q){return q.type==='single';}).length;
   $('bi-m').textContent = BANK.filter(function(q){return q.type==='multi';}).length;
   $('bi-i').textContent = BANK.filter(function(q){return q.type==='img';}).length;
+  $('app-ver').textContent = APP_VER;
   $('dept-hint').textContent = '请选择你所属的大队或科室';
 }
 
@@ -719,20 +726,19 @@ function buildRound(opts){
     var neu = all.filter(function(q){ var r=S.rec[q.id]; return !r||!r.s; });
     var rest= all.filter(function(q){ var r=S.rec[q.id]; return r&&r.s>0&&r.d>Date.now(); })
                  .sort(function(a,b){ return S.rec[a.id].d - S.rec[b.id].d; });
-    pool = due.concat(neu, rest);
+    pool = due.concat(shuffle(neu), rest);   /* 未做过的题随机优先 */
     if(!pool.length) return {err:'该题型题库为空'};
     return {qs: pool.slice(0, Math.min(n, pool.length)), title: TYPE_CN[opts.t]+'专练'};
   }
   if(opts.mode==='mock'){
-    /* 模拟测试 · 卷面满分 100：判断20×1.5 + 单选20×1.5 + 多选10×2 + 识图10×2 */
+    /* 测试 · 卷面满分 100：判断20×1.5 + 单选20×1.5 + 多选10×2 + 识图10×2；全题库随机抽题，每次/每人不同 */
     function pickN(type, n){
-      var a = BANK.filter(function(q){ return q.type===type; });
-      for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i]; a[i]=a[j]; a[j]=t; }
-      return a.slice(0, n);
+      return shuffle(BANK.filter(function(q){ return q.type===type; })).slice(0, n);
     }
     var qs = pickN('judge',20).concat(pickN('single',20), pickN('multi',10), pickN('img',10));
+    shuffle(qs);   /* 题型交错打乱，相邻题目题型不固定 */
     if(!qs.length) return {err:'题库为空，请检查数据'};
-    return {qs: qs, title:'模拟测试', mock:true};
+    return {qs: qs, title:'测试', mock:true};
   }
   /* 默认（每日任务）：①优先全新未做过的题 → ②新题做完一遍后，出曾做过的题并按遗忘曲线（到期优先）→ ③兜底 */
   var now = Date.now();
@@ -748,7 +754,7 @@ function buildRound(opts){
     if((rb.w>0?1:0)!==(ra.w>0?1:0)) return (rb.w>0?1:0)-(ra.w>0?1:0);
     return (ra.d||0)-(rb.d||0);
   });
-  neu.sort(function(a,b){ return a.gid-b.gid; });
+  shuffle(neu);   /* 未做过的题随机顺序，不按题号固定出题 */
   rest.sort(function(a,b){ return S.rec[a.id].d - S.rec[b.id].d; });
   pool = neu.concat(due);
   if(pool.length < n) pool = pool.concat(rest.slice(0, n-pool.length));
@@ -1127,6 +1133,11 @@ function showResult(){
     score = fmtScore(ms.s);
     pct = Math.round(ms.s); /* 卷面满分 100 */
     sub = '满分 100 · '+n+' 题 · 用时 '+Math.floor(used/60)+'′'+pad(used%60)+'″ · '+lvl(pct);
+    /* 记入测试历史（统计页展示） */
+    var eh = examHisGet();
+    eh.unshift({d:dayKey(), t:Date.now(), s:ms.s, u:used, n:n});
+    if(eh.length>50) eh.length=50;
+    examHisSave(eh);
   }else{
     score = pct;
     sub = R.title+' · 共 '+n+' 题 · 用时 '+Math.floor(used/60)+'′'+pad(used%60)+'″ · '+lvl(pct);
@@ -1284,6 +1295,25 @@ function renderStats(){
           + '<div class="bar-h"><i style="width:'+Math.round(x.s/x.n*100)+'%"></i></div></div>';
       }).join('')
     + '</div>';
+
+  /* 测试情况 */
+  var eh = examHisGet();
+  h += '<div class="card"><div class="sec-t">测试情况</div>';
+  if(!eh.length){
+    h += '<div class="muted" style="line-height:1.9">还没有参加过测试。测试从全题库随机抽取 60 题（判断20/单选20/多选10/识图10），满分 100 分，交卷后自动判分并计入管理员端实时榜单。</div>';
+  }else{
+    var ebest = 0, esum = 0;
+    eh.forEach(function(x){ if(x.s>ebest) ebest=x.s; esum+=x.s; });
+    h += '<div class="stat-l"><span>已考次数</span><b>'+eh.length+' 次</b></div>'
+       + '<div class="stat-l"><span>最高分</span><b style="color:#0E9F6E">'+fmtScore(ebest)+'</b></div>'
+       + '<div class="stat-l"><span>平均分</span><b>'+fmtScore(Math.round(esum/eh.length*10)/10)+'</b></div>'
+       + '<div style="height:10px"></div><div class="muted" style="margin-bottom:4px">最近成绩：</div>'
+       + eh.slice(0,5).map(function(x,i){
+           return '<div class="stat-l"><span>第'+(eh.length-i)+'次 · '+x.d+'</span><b>'+fmtScore(x.s)+' 分 · '+Math.floor(x.u/60)+'′'+pad(x.u%60)+'″</b></div>';
+         }).join('')
+       + '<div class="muted" style="margin-top:10px;line-height:1.8">每次测试都从全题库随机抽题，每次、每人的卷子都不一样；交卷后成绩自动进入管理员端实时榜单。</div>';
+  }
+  h += '</div>';
 
   h += '<div class="card"><div class="sec-t">错题分布（按错误次数）</div>'
     + [1,2,3].map(function(w){
@@ -1808,9 +1838,9 @@ function cloudPull(silent){
   fetch(API_BASE + '/api/all', { headers: admHeaders() })
     .then(function(r){
       if(r.status === 401){
-        admLogout();
+        /* token 失效：退出并回口令框（必须重渲染，否则界面停在空后台） */
+        if(ADM.on){ admLogout(); renderAdmin(); toast('登录已过期，请重新输入管理口令'); }
         CLOUD.state='err'; CLOUD.msg='会话已过期';
-        if(ADM.on){ renderAdmin(); toast('登录已过期，请重新输入管理口令'); }
         return null;
       }
       if(!r.ok){ CLOUD.state='err'; CLOUD.msg='拉取失败'; if(!silent) toast('拉取失败，请稍后重试'); return null; }
@@ -1864,7 +1894,7 @@ function examPull(silent){
   if(!API_BASE) return;
   fetch(API_BASE + '/api/exam/all', { headers: admHeaders() })
     .then(function(r){
-      if(r.status === 401){ admLogout(); if(ADM.on){ renderAdmin(); toast('登录已过期，请重新输入管理口令'); } return null; }
+      if(r.status === 401){ if(ADM.on){ admLogout(); renderAdmin(); toast('登录已过期，请重新输入管理口令'); } return null; }
       if(!r.ok) return null;
       return r.json();
     }).then(function(list){
@@ -1904,7 +1934,7 @@ function examCard(){
   var avg = n ? Math.round(examSorted().reduce(function(s,x){return s+x.score;},0)/n*10)/10 : 0;
   var h = '<div class="card"><div class="sec-t">考试实时榜单（总分降序 · 同分按用时短优先）<span class="muted" style="font-weight:400;font-size:11.5px"> 已交卷 '+n+' 人 · 平均 '+avg+' 分</span></div>';
   if(!n){
-    h += '<div class="muted" style="text-align:center;padding:12px 0;line-height:1.9">暂无人交卷。<br>队员完成「模拟测试」交卷后即自动进入榜单；开考前可点「清空榜单」。</div>';
+    h += '<div class="muted" style="text-align:center;padding:12px 0;line-height:1.9">暂无人交卷。<br>队员完成「测试」交卷后即自动进入榜单；开考前可点「清空榜单」。</div>';
   }else{
     h += '<div class="lt-wrap"><table class="lt"><thead><tr><th>名次</th><th>姓名</th><th>部门</th><th>总分</th><th>用时</th><th>交卷时间</th></tr></thead><tbody>';
     examSorted().forEach(function(x, i){
