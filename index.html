@@ -566,7 +566,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.10.09-1102';
+var APP_VER = '2026.10.09-1206';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -1844,10 +1844,15 @@ function cloudPush(silent){
     body: JSON.stringify(cloudRow())
   }).then(function(r){
     if(r.ok){ CLOUD.state='on'; CLOUD.msg='已上报 · ' + fmtTime(new Date()); CLOUD.lastPush = Date.now(); }
-    else { CLOUD.state='err'; CLOUD.msg='上报失败'; if(!silent) toast('云端上报失败，稍后自动重试'); }
+    else { CLOUD.state='err'; CLOUD.msg='上报失败'; if(!silent) toast('云端上报失败，稍后自动重试'); scheduleCloudRetry(); }
   }).catch(function(){
-    CLOUD.state='err'; CLOUD.msg='上报失败（网络）'; if(!silent) toast('网络异常，稍后自动重试');
+    CLOUD.state='err'; CLOUD.msg='上报失败（网络）'; if(!silent) toast('网络异常，稍后自动重试'); scheduleCloudRetry();
   });
+}
+var CLOUD_RETRY = null;
+function scheduleCloudRetry(){
+  if(CLOUD_RETRY) return;
+  CLOUD_RETRY = setTimeout(function(){ CLOUD_RETRY = null; if(S.user) cloudPush(true); }, 20000);
 }
 /* 节流上报：连续答题时也不会把请求打爆 */
 function cloudPushSoon(){
@@ -1922,14 +1927,38 @@ function cloudPull(silent){
 /* ---------------- 考试实时榜单 ---------------- */
 var ADM_EX = { rows:[], auto:null };
 function fmtUsed(s){ return Math.floor(s/60)+'′'+pad(s%60)+'″'; }
+/* 成绩离线队列：先落盘后发送，确保考试成绩不因扩展拦截/网络抖动丢失 */
+function examQueueGet(){ var q = lsGet('cgks_ex_q', []); return Array.isArray(q) ? q : []; }
+function examQueueSave(q){ lsSet('cgks_ex_q', Array.isArray(q) ? q : []); }
+var EXQ_SENDING = false, EXQ_TIMER = null;
 function examPush(score, used){
   if(!S.user || !API_BASE) return;
+  var q = examQueueGet();
+  q.push({ uname:S.user.name, dept:S.user.dept,
+    id6:String(S.user.id).slice(-6), score:score, max:100,
+    used:used, ts:new Date().toISOString() });
+  examQueueSave(q);
+  flushExamQueue();
+}
+function flushExamQueue(){
+  if(EXQ_SENDING || !API_BASE) return;
+  var q = examQueueGet();
+  if(!q.length) return;
+  EXQ_SENDING = true;
   fetch(API_BASE + '/api/exam', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ uname:S.user.name, dept:S.user.dept,
-      id6:String(S.user.id).slice(-6), score:score, max:100,
-      used:used, ts:new Date().toISOString() })
-  }).catch(function(){});
+    body: JSON.stringify(q[0])
+  }).then(function(r){
+    EXQ_SENDING = false;
+    if(r.ok){
+      q = examQueueGet(); q.shift(); examQueueSave(q);
+      if(q.length) flushExamQueue();
+    }else{ scheduleExamRetry(); }
+  }).catch(function(){ EXQ_SENDING = false; scheduleExamRetry(); });
+}
+function scheduleExamRetry(){
+  if(EXQ_TIMER) return;
+  EXQ_TIMER = setTimeout(function(){ EXQ_TIMER = null; flushExamQueue(); }, 30000);
 }
 function examPull(silent){
   if(!API_BASE) return;
@@ -2045,6 +2074,10 @@ function verCheck(){
       $('sw-remember').classList.add('on');
     }
   }catch(e){ if(window.showFatal) showFatal('启动失败：'+((e&&e.message)||e)); }
+  /* 补传积压的考试成绩（扩展拦截/断网恢复后自动重发） */
+  setTimeout(flushExamQueue, 3000);
+  setInterval(flushExamQueue, 60000);
+  window.addEventListener('online', function(){ flushExamQueue(); if(S.user) cloudPushSoon(); });
 })();
 </script>
 </body>
