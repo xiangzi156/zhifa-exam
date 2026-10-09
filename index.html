@@ -267,6 +267,11 @@ body{
 /* 版本自检提示条：页面版本与服务端不一致时显示 */
 #ver-bar{display:none;position:fixed;top:0;left:0;right:0;z-index:999;background:#B32525;color:#fff;font-size:13px;padding:10px 14px;text-align:center;line-height:1.6}
 #ver-bar.on{display:block}
+/* 错误自诊断条：页面脚本异常时显示具体错误 + 一键修复 */
+#err-bar{display:none;position:fixed;top:0;left:0;right:0;z-index:1000;background:#B32525;color:#fff;font-size:13px;padding:10px 14px;line-height:1.6}
+#err-bar button{background:#fff;color:#B32525;border:0;border-radius:6px;padding:7px 12px;font-weight:600;margin-right:8px;font-size:13px;cursor:pointer}
+#err-bar .muted-w{opacity:.85;margin-top:7px;font-size:11px}
+#err-close{position:absolute;top:6px;right:10px;background:none !important;color:#fff !important;font-size:16px;padding:2px 6px !important;margin:0 !important}
 .adm-back{position:absolute;right:14px;top:20px;font-size:13px;color:rgba(255,255,255,.85);cursor:pointer;font-weight:500}
 .kpi{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-bottom:12px}
 .kpi>div{background:#F5F8FC;border:1px solid #E3EAF3;border-radius:11px;padding:11px 13px}
@@ -312,6 +317,35 @@ table.lt tr.top10 td:first-child{color:#9A6A00}
 </head>
 <body>
 <div id="ver-bar">📢 系统已更新为新版本，请刷新页面：<br>电脑按 <b>Ctrl+F5</b>，手机请下拉刷新或清理浏览器缓存后重试</div>
+<div id="err-bar">
+  <button id="err-close" onclick="this.parentNode.style.display='none'">×</button>
+  <div id="err-msg"></div>
+  <div style="margin-top:9px">
+    <button onclick="fixLocal()">一键修复（清本机数据并刷新）</button>
+    <button onclick="location.reload()">仅刷新</button>
+  </div>
+  <div class="muted-w">修复会清除本机练习缓存、需重新登录；如频繁出现，请截图此红条反馈。</div>
+</div>
+<script>
+/* 错误自诊断（自包含，先于主脚本装载；任何脚本异常都可见可修复） */
+(function(){
+  function show(msg){
+    var b=document.getElementById('err-bar'); if(!b) return;
+    var m=document.getElementById('err-msg'); if(m) m.textContent='页面脚本异常：'+msg;
+    b.style.display='block';
+  }
+  window.addEventListener('error',function(e){ show((e&&e.message)||'未知错误'); });
+  window.addEventListener('unhandledrejection',function(e){ var r=e&&e.reason; show((r&&(r.message||r))||'Promise 异常'); });
+  window.showFatal=show;
+  window.fixLocal=function(){
+    try{
+      var ks=[],i; for(i=0;i<localStorage.length;i++){ var k=localStorage.key(i); if(k&&k.indexOf('cgks')===0) ks.push(k); }
+      for(i=0;i<ks.length;i++) localStorage.removeItem(ks[i]);
+    }catch(e){}
+    location.reload();
+  };
+})();
+</script>
 <div id="app">
 
   <!-- ============ 登录 ============ -->
@@ -532,7 +566,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.10.09-0828';
+var APP_VER = '2026.10.09-1102';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -1599,6 +1633,9 @@ function adminExit(){
   go(S.user ? 'home' : 'login');
 }
 function renderAdmin(){
+  try{ renderAdminCore(); }catch(e){ if(window.showFatal) showFatal('管理后台渲染失败：'+((e&&e.message)||e)); }
+}
+function renderAdminCore(){
   var back = $('ad-back');
   if(back) back.textContent = (ADM.on && S.user) ? '返回首页' : '返回登录';
   var box = $('ad-body'); if(!box) return;
@@ -1979,28 +2016,35 @@ function verCheck(){
 }
 (function boot(){
   verCheck();
-  deepInit();
-  ADM.rows = lsGet('cgks_adm_rows', []) || [];
-  var cur = lsGet('cgks_cur', null);
-  if(cur && cur.id){
-    S.user = cur;
-    S.rec = lsGet(keyRec(), {});
-    S.daily = lsGet(keyDay(), {});
-    S.cfg = lsGet('cgks_cfg_'+cur.id, null) || {perRound:10, goal:50, remember:true};
-    if(S.cfg.perRound === 8) S.cfg.perRound = 10;
-    if(S.cfg.goal === 20) S.cfg.goal = 50;
-    $('i-name').value = cur.name;
-    $('i-id').value = cur.id;
-    if(DEPTS.indexOf(cur.dept)>=0) $('i-dept').value = cur.dept;
-    else { $('i-dept').value = DEPTS[DEPTS.length-1]; $('f-dept-other').style.display='block'; $('i-dept2').value = cur.dept; }
-    $('sw-remember').classList.toggle('on', S.cfg.remember!==false);
-    $('tabbar').classList.add('on');
-    go('home');
-    refreshHome();
-  }else{
-    go('login');
-    $('sw-remember').classList.add('on');
-  }
+  try{
+    deepInit();
+    ADM.rows = lsGet('cgks_adm_rows', []) || [];
+    if(!Array.isArray(ADM.rows)) ADM.rows=[];   /* 兼容旧版残留的非数组脏数据 */
+    ADM.rows.forEach(function(r){ r.score=r.score||0; r.seen=r.seen||0; if(!r.daily||typeof r.daily!=='object') r.daily={}; });
+    var cur = lsGet('cgks_cur', null);
+    if(cur && cur.id){
+      S.user = cur;
+      S.rec = lsGet(keyRec(), {}) || {};
+      if(typeof S.rec!=='object'||Array.isArray(S.rec)) S.rec={};
+      S.daily = lsGet(keyDay(), {}) || {};
+      if(typeof S.daily!=='object'||Array.isArray(S.daily)) S.daily={};
+      S.cfg = lsGet('cgks_cfg_'+cur.id, null) || {perRound:10, goal:50, remember:true};
+      if(typeof S.cfg!=='object'||Array.isArray(S.cfg)) S.cfg={perRound:10, goal:50, remember:true};
+      if(S.cfg.perRound === 8) S.cfg.perRound = 10;
+      if(S.cfg.goal === 20) S.cfg.goal = 50;
+      $('i-name').value = cur.name;
+      $('i-id').value = cur.id;
+      if(DEPTS.indexOf(cur.dept)>=0) $('i-dept').value = cur.dept;
+      else { $('i-dept').value = DEPTS[DEPTS.length-1]; $('f-dept-other').style.display='block'; $('i-dept2').value = cur.dept; }
+      $('sw-remember').classList.toggle('on', S.cfg.remember!==false);
+      $('tabbar').classList.add('on');
+      go('home');
+      refreshHome();
+    }else{
+      go('login');
+      $('sw-remember').classList.add('on');
+    }
+  }catch(e){ if(window.showFatal) showFatal('启动失败：'+((e&&e.message)||e)); }
 })();
 </script>
 </body>
