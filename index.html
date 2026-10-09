@@ -264,6 +264,9 @@ body{
 .adm-entry{margin:16px 0 4px;text-align:center;font-size:12.5px;color:#8A96A8;cursor:pointer;padding:10px;border-radius:10px}
 .adm-entry:active{background:#F4F7FB}
 .adm-entry b{color:var(--navy2);font-weight:600;border-bottom:1px dashed #B9C7D8}
+/* 版本自检提示条：页面版本与服务端不一致时显示 */
+#ver-bar{display:none;position:fixed;top:0;left:0;right:0;z-index:999;background:#B32525;color:#fff;font-size:13px;padding:10px 14px;text-align:center;line-height:1.6}
+#ver-bar.on{display:block}
 .adm-back{position:absolute;right:14px;top:20px;font-size:13px;color:rgba(255,255,255,.85);cursor:pointer;font-weight:500}
 .kpi{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-bottom:12px}
 .kpi>div{background:#F5F8FC;border:1px solid #E3EAF3;border-radius:11px;padding:11px 13px}
@@ -308,6 +311,7 @@ table.lt tr.top10 td:first-child{color:#9A6A00}
 </style>
 </head>
 <body>
+<div id="ver-bar">📢 系统已更新为新版本，请刷新页面：<br>电脑按 <b>Ctrl+F5</b>，手机请下拉刷新或清理浏览器缓存后重试</div>
 <div id="app">
 
   <!-- ============ 登录 ============ -->
@@ -528,7 +532,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.10.08-1602';
+var APP_VER = '2026.10.09-0828';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -1959,7 +1963,22 @@ function renderExam(){
 }
 
 /* ---------------- 启动 ---------------- */
+/* 版本自检：页面版本与服务端不一致 → 顶部提示刷新（兼容旧缓存页面调新接口） */
+function verCheck(){
+  if(location.protocol === 'file:') return;
+  try{
+    fetch((typeof API_BASE!=='undefined' && API_BASE ? API_BASE : '') + '/api/ver')
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){
+        if(j && j.ver && typeof APP_VER!=='undefined' && APP_VER !== 'dev' && j.ver !== APP_VER){
+          $('ver-bar').classList.add('on');
+        }
+      })
+      .catch(function(){});
+  }catch(e){}
+}
 (function boot(){
+  verCheck();
   deepInit();
   ADM.rows = lsGet('cgks_adm_rows', []) || [];
   var cur = lsGet('cgks_cur', null);
