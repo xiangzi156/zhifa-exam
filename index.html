@@ -32,6 +32,8 @@ body{
 }
 #app{max-width:560px;margin:0 auto;min-height:100%;position:relative}
 .view{display:none;padding-bottom:96px;min-height:100vh}
+/* 答题页底部是固定操作区：下边距跟随其实际高度，内容不会被遮住 */
+#v-quiz{padding-bottom:calc(var(--foot-h, 96px) + 16px)}
 .view.on{display:block;animation:fade .22s ease}
 @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
@@ -193,6 +195,19 @@ body{
 .qfoot .dots.exam i{min-width:26px;width:auto;height:auto;border-radius:6px;font-size:11px;font-style:normal;font-weight:600;padding:4px 5px;text-align:center;background:#E4EBF4;color:#33475E;cursor:pointer}
 .qfoot .dots.exam i.done{background:#CDEBD9;color:#0E7E58}
 .qfoot .dots.exam i.cur{background:var(--navy);color:#fff;width:auto;border-radius:6px}
+/* 答题卡折叠条：始终单独一行显示「已答 x / 60」，不再被序号行挤压 */
+.qfoot .sheet-tog{display:none;width:100%;align-items:center;gap:8px;background:#EEF3FA;border:0;border-radius:8px;
+  padding:8px 12px;margin-bottom:8px;font-size:12.5px;color:#33475E;font-weight:600;font-family:inherit;cursor:pointer}
+.qfoot .sheet-tog b{margin-left:auto;color:var(--navy);font-weight:700}
+.qfoot .sheet-tog i{font-style:normal;font-size:9px;opacity:.55;transition:transform .2s}
+.qfoot .sheet-tog.open i{transform:rotate(180deg)}
+/* 答题卡展开区：限高 + 内部滚动，序号行不再挤压下方的提交按钮 */
+.qfoot .dots.exam{max-height:34vh;overflow-y:auto;justify-content:flex-start;padding:2px 0;-webkit-overflow-scrolling:touch}
+.qfoot .dots.hid{display:none}
+@media (max-width:400px){
+  .qfoot .dots.exam{gap:5px;max-height:32vh}
+  .qfoot .dots.exam i{min-width:23px;padding:3px 4px;font-size:10.5px}
+}
 
 /* ---------- 结算 ---------- */
 .score-hero{text-align:center;padding:26px 18px 22px;border-radius:var(--r);color:#fff;margin-bottom:12px;
@@ -246,7 +261,7 @@ body{
 #tabbar div.on{color:var(--navy2);font-weight:600}
 .badge{position:absolute;transform:translate(11px,-4px);background:var(--bad);color:#fff;font-size:9.5px;
   min-width:15px;height:15px;line-height:15px;border-radius:8px;padding:0 4px;font-weight:700}
-.toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(12px);background:rgba(14,34,64,.94);
+.toast{position:fixed;left:50%;bottom:calc(var(--foot-h, 96px) + 14px);transform:translateX(-50%) translateY(12px);background:rgba(14,34,64,.94);
   color:#fff;padding:11px 18px;border-radius:12px;font-size:13.5px;z-index:99;opacity:0;transition:.25s;pointer-events:none;max-width:84%}
 .toast.on{opacity:1;transform:translateX(-50%)}
 .empty{text-align:center;padding:44px 20px;color:var(--sub);font-size:13.5px;line-height:1.9}
@@ -470,6 +485,9 @@ table.lt tr.top10 td:first-child{color:#9A6A00}
     </div>
     <div class="qbody" id="qz-body"></div>
     <div class="qfoot">
+      <button class="sheet-tog" id="qz-sheet-tog" onclick="toggleSheet()">
+        <span>答题卡</span><b id="qz-sheet-n">已答 0 / 0</b><i>▲</i>
+      </button>
       <div class="dots" id="qz-dots"></div>
       <button class="btn" id="qz-next" onclick="nextQ()" style="display:none">下一题</button>
       <button class="btn gold" id="qz-submit" onclick="submitMulti()" style="display:none">提交答案</button>
@@ -566,7 +584,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.10.28-1659';
+var APP_VER = '2026.10.28-1803';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -814,6 +832,8 @@ function go(v){
     c.classList.toggle('on', c.getAttribute('data-v')===v);
   });
   window.scrollTo(0,0);
+  /* 离开答题页时把底部补偿恢复为默认（非答题页底部是主导航，高度固定） */
+  if(v!=='quiz') document.documentElement.style.setProperty('--foot-h', '96px');
   if(v==='home') refreshHome();
   if(v==='wrongs') renderWrongs();
   if(v==='stats') renderStats();
@@ -908,6 +928,7 @@ function startRound(opts){
   if(r.err){ toast(r.err); return; }
   S.round = {qs:r.qs, title:r.title, mock:!!r.mock, i:0, right:0, wrong:0, log:[], ans:{}, t0:Date.now()};
   S.idx = 0;
+  SHEET_OPEN = false;   /* 每卷从收起态开始，避免上一卷展开状态残留 */
   go('quiz');
   renderQ();
 }
@@ -926,11 +947,13 @@ function renderQ(){
   if(exam){ updateExamBar(); }
   else{
     $('qz-dots').className='dots';
-    $('qz-dots').innerHTML = R.qs.map(function(_,i){
-      var cls = i<R.i ? (R.log[i]&&R.log[i].ok?'ok':'no') : (i===R.i?'cur':'');
-      return '<i class="'+cls+'"></i>';
-    }).join('');
+      $('qz-dots').innerHTML = R.qs.map(function(_,i){
+        var cls = i<R.i ? (R.log[i]&&R.log[i].ok?'ok':'no') : (i===R.i?'cur':'');
+        return '<i class="'+cls+'"></i>';
+      }).join('');
+    applySheet();   /* 日常练习：隐藏答题卡切换条、恢复原进度点 */
   }
+  syncFootH();   /* 按钮/序号显示状态变化后同步底部高度补偿 */
 
   var h = '<div class="qtype" id="qtype">'+qtypeTag(q)+'</div>';
   h += '<div class="qtext">'+esc(q.stem)+'</div>';
@@ -1121,6 +1144,30 @@ function nextQ(){
   R.i++; renderQ();
   cloudPushSoon();
 }
+/* ---- 答题卡折叠：默认收起成一行「已答 x / 60」，点开才展开序号；跳题后自动收起 ---- */
+var SHEET_OPEN = false;
+/* 底部固定面板高度写入 --foot-h，供 .view 下边距与 toast 定位跟随，避免内容/提示被遮挡 */
+function syncFootH(){
+  var f = document.querySelector('.qfoot');
+  if(!f) return;
+  var h = Math.ceil(f.getBoundingClientRect().height);
+  if(h > 0) document.documentElement.style.setProperty('--foot-h', h + 'px');
+}
+function applySheet(){
+  var R = S.round, mock = !!(R && R.mock);
+  var tog = $('qz-sheet-tog'), dots = $('qz-dots');
+  if(!tog || !dots) return;
+  tog.style.display = mock ? 'flex' : 'none';
+  tog.classList.toggle('open', !!(mock && SHEET_OPEN));
+  dots.classList.toggle('hid', !!(mock && !SHEET_OPEN));
+  syncFootH();
+}
+function toggleSheet(){
+  if(!(S.round && S.round.mock)) return;
+  SHEET_OPEN = !SHEET_OPEN;
+  applySheet();
+}
+
 /* ---- 考试模式：答题卡跳题 + 交卷统一判分 ---- */
 function updateExamBar(){
   var R = S.round; if(!R) return;
@@ -1132,8 +1179,10 @@ function updateExamBar(){
     return '<i class="'+(a?'done ':'')+(i===R.i?'cur':'')+'" onclick="jumpTo('+i+')">'+(i+1)+'</i>';
   }).join('');
   $('qz-handin').textContent = '提交试卷（已答 '+done+' / '+total+'）';
+  var sn = $('qz-sheet-n'); if(sn) sn.textContent = '已答 '+done+' / '+total;
+  applySheet();
 }
-function jumpTo(i){ var R = S.round; if(!R || !R.mock) return; R.i = i; renderQ(); }
+function jumpTo(i){ var R = S.round; if(!R || !R.mock) return; R.i = i; SHEET_OPEN = false; renderQ(); }
 function handIn(){
   var R = S.round; if(!R || !R.mock || R.done) return;
   var miss = [];
@@ -2077,6 +2126,12 @@ function verCheck(){
   /* 补传积压的考试成绩（扩展拦截/断网恢复后自动重发） */
   setTimeout(flushExamQueue, 3000);
   setInterval(flushExamQueue, 60000);
+  /* 底部面板高度随时可能变化（序号行数/按钮显隐/横竖屏），监听后同步补偿值 */
+  try {
+    var _qf = document.querySelector('.qfoot');
+    if(_qf && window.ResizeObserver) new ResizeObserver(syncFootH).observe(_qf);
+    else window.addEventListener('resize', syncFootH);
+  } catch(e) { window.addEventListener('resize', syncFootH); }
   window.addEventListener('online', function(){ flushExamQueue(); if(S.user) cloudPushSoon(); });
 })();
 </script>
