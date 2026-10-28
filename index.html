@@ -288,6 +288,22 @@ body{
 #err-bar .muted-w{opacity:.85;margin-top:7px;font-size:11px}
 #err-close{position:absolute;top:6px;right:10px;background:none !important;color:#fff !important;font-size:16px;padding:2px 6px !important;margin:0 !important}
 .adm-back{position:absolute;right:14px;top:20px;font-size:13px;color:rgba(255,255,255,.85);cursor:pointer;font-weight:500}
+/* 右侧居中「返回上一页」把手：除登录页外各页面通用；贴边半圆，尽量少压内容 */
+.fab-back{position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:60;
+  width:34px;height:54px;padding:0;border:0;border-radius:14px 0 0 14px;
+  background:rgba(14,34,64,.82);color:#fff;font-size:24px;line-height:1;font-family:inherit;
+  display:none;align-items:center;justify-content:center;cursor:pointer;
+  box-shadow:-2px 2px 12px rgba(14,34,64,.2);-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+.fab-back.on{display:flex}
+.fab-back:active{background:rgba(14,34,64,.96);transform:translateY(-50%) scale(.95)}
+/* 宽屏时贴到内容区（560px 居中）外侧，不压题目和表单 */
+@media (min-width:640px){ .fab-back{right:calc(50% - 320px);width:36px;height:58px;border-radius:14px} }
+/* 手机端：把手占住右侧 34px，页面内容（答题卡之外的正文）统一让出安全区，避免压住文字；
+   登录页没有把手，保持原边距 */
+@media (max-width:639px){
+  .view.on:not(#v-login) .wrap{padding-right:40px}
+  .view.on .qbody{padding-right:40px}
+}
 .kpi{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-bottom:12px}
 .kpi>div{background:#F5F8FC;border:1px solid #E3EAF3;border-radius:11px;padding:11px 13px}
 .kpi b{display:block;font-size:21px;color:var(--navy2);font-weight:700;line-height:1.3}
@@ -550,6 +566,9 @@ table.lt tr.top10 td:first-child{color:#9A6A00}
     <div class="wrap" id="ad-body"></div>
   </div>
 
+  <!-- 返回上一页：右侧垂直居中，各页面通用（登录页隐藏） -->
+  <button id="fab-back" class="fab-back" type="button" onclick="goBack()" aria-label="返回上一页" title="返回上一页">‹</button>
+
   <nav id="tabbar">
     <div data-v="home" class="on" onclick="go('home')"><i>🏠</i>首页</div>
     <div data-v="wrongs" onclick="go('wrongs')"><i>📕</i>错题本</div>
@@ -584,7 +603,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.10.28-1803';
+var APP_VER = '2026.10.28-1900';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -694,7 +713,8 @@ function doLogin(){
 
   var known = Object.keys(S.rec).length;
   $('tabbar').classList.add('on');
-  go('home');
+  NAV_HIST.length = 0;   /* 登录后清空历史，避免「返回」退回登录页 */
+  go('home', true);
   toast(known? ('欢迎回来，'+name) : ('登录成功，'+name));
   refreshHome();
   cloudPush(true);          /* 登录即上报一次，管理端马上能看到人 */
@@ -820,7 +840,15 @@ function buildRound(opts){
 }
 
 /* ---------------- 路由 ---------------- */
-function go(v){
+/* 页面访问栈：支撑「返回上一页」。只在真正换页时入栈，同页重渲染（如 go('quiz') 后手动 renderQ）不重复记。 */
+var NAV_HIST = [], NAV_CUR = 'login', NAV_MAX = 20;
+
+function go(v, noPush){
+  if(!noPush && v !== NAV_CUR){
+    NAV_HIST.push(NAV_CUR);
+    if(NAV_HIST.length > NAV_MAX) NAV_HIST.shift();
+  }
+  NAV_CUR = v;
   ['login','home','quiz','result','wrongs','stats','me','admin'].forEach(function(x){
     var el=$('v-'+x); if(el) el.classList.toggle('on', x===v);
   });
@@ -840,6 +868,36 @@ function go(v){
   if(v==='me') renderMe();
   if(v==='admin') renderAdmin();
   if(v==='wrongs'||v==='stats'||v==='me') shadeTab();
+  updateBackBtn();
+}
+
+/* ---------------- 返回上一页 ---------------- */
+function updateBackBtn(){
+  var b = $('fab-back'); if(!b) return;
+  /* 登录页没有上一页可返（也不该退回更早的登录流程），其余页面一律显示 */
+  b.classList.toggle('on', NAV_CUR !== 'login');
+}
+function goBack(){
+  var cur = NAV_CUR;
+  /* 答题页：走原有退出流程，未提交的试卷必须先确认，不能直接跳走 */
+  if(cur === 'quiz'){ quitQuiz(); return; }
+  /* 管理后台：走原有退出流程，正确复位管理会话 */
+  if(cur === 'admin'){ adminExit(); return; }
+  /* 结算页：试卷已交，不再退回答题页，直接回首页 */
+  if(cur === 'result'){ NAV_HIST.length = 0; go('home', true); return; }
+  var target = null;
+  while(NAV_HIST.length){
+    var t = NAV_HIST.pop();
+    if(t === 'quiz' || t === 'admin') continue;   /* 已结束/已退出的页面，跳过 */
+    if(t === 'login' && S.user) continue;         /* 已登录不再退回登录页 */
+    target = t; break;
+  }
+  if(!target){
+    if(cur !== 'home' && S.user){ go('home', true); return; }
+    toast(cur === 'home' ? '已经在首页了' : '没有上一页了');
+    return;
+  }
+  go(target, true);   /* 回退不入栈，连续点可一路往回 */
 }
 function shadeTab(){
   var w = BANK.filter(function(q){ var r=S.rec[q.id]; return r&&r.w>0; }).length;
@@ -1547,7 +1605,8 @@ function logout(){
   try{ localStorage.removeItem('cgks_cur'); }catch(e){}
   $('tabbar').classList.remove('on');
   $('i-name').value=''; $('i-id').value='';
-  go('login');
+  NAV_HIST.length = 0;   /* 退出后清空历史，防止「返回」回到已登出的页面 */
+  go('login', true);
 }
 
 /* ============================================================
@@ -2116,7 +2175,8 @@ function verCheck(){
       else { $('i-dept').value = DEPTS[DEPTS.length-1]; $('f-dept-other').style.display='block'; $('i-dept2').value = cur.dept; }
       $('sw-remember').classList.toggle('on', S.cfg.remember!==false);
       $('tabbar').classList.add('on');
-      go('home');
+      NAV_HIST.length = 0;   /* 免登录直达首页，无历史可返 */
+      go('home', true);
       refreshHome();
     }else{
       go('login');
