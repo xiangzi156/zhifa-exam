@@ -603,7 +603,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.10.28-1900';
+var APP_VER = '2026.10.28-1908';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -869,6 +869,7 @@ function go(v, noPush){
   if(v==='admin') renderAdmin();
   if(v==='wrongs'||v==='stats'||v==='me') shadeTab();
   updateBackBtn();
+  syncFabPos();
 }
 
 /* ---------------- 返回上一页 ---------------- */
@@ -991,7 +992,12 @@ function startRound(opts){
   renderQ();
 }
 function quitQuiz(){
-  if(S.round && S.round.i>0){
+  /* 只要动过这一组（翻过题，或已有作答/对错记录）就先确认再退出。
+     考试模式下可通过答题卡跳回第 1 题，此时 i=0 但其实已答很多题，不能按 i 判断。 */
+  var R = S.round;
+  var touched = !!R && (R.i > 0 || (R.ans && Object.keys(R.ans).length > 0)
+                        || (R.log && R.log.length > 0) || R.right > 0 || R.wrong > 0);
+  if(touched){
     if(!confirm('退出后本组进度不保存，确定退出吗？')) return;
   }
   S.round = null; clearRound(); go('home');
@@ -1207,9 +1213,29 @@ var SHEET_OPEN = false;
 /* 底部固定面板高度写入 --foot-h，供 .view 下边距与 toast 定位跟随，避免内容/提示被遮挡 */
 function syncFootH(){
   var f = document.querySelector('.qfoot');
-  if(!f) return;
-  var h = Math.ceil(f.getBoundingClientRect().height);
-  if(h > 0) document.documentElement.style.setProperty('--foot-h', h + 'px');
+  if(f){
+    var h = Math.ceil(f.getBoundingClientRect().height);
+    if(h > 0) document.documentElement.style.setProperty('--foot-h', h + 'px');
+  }
+  syncFabPos();
+}
+/* 返回把手定位：答题页在「顶部标题栏下沿 ~ 底部面板上沿」之间垂直居中，
+   否则矮屏（横屏 568x320）时居中的把手会压到答题卡/提交按钮上 */
+function syncFabPos(){
+  var b = $('fab-back'); if(!b) return;
+  var vh = window.innerHeight || 0;
+  var top = 0, bot = vh;
+  if(NAV_CUR === 'quiz'){
+    var bar = document.querySelector('#v-quiz .qbar');
+    if(bar) top = Math.max(0, Math.round(bar.getBoundingClientRect().bottom));
+    var fh = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--foot-h'), 10) || 0;
+    bot = vh - fh;
+    /* 可用高度不足时保底：宁可贴紧底部面板也不要跑出屏幕 */
+    if(bot - top < 90) bot = Math.min(vh, top + 90);
+  }
+  var mid = Math.round(top + Math.max(0, bot - top) / 2);
+  mid = Math.max(0, Math.min(vh, mid));
+  b.style.top = mid + 'px';
 }
 function applySheet(){
   var R = S.round, mock = !!(R && R.mock);
@@ -2192,6 +2218,7 @@ function verCheck(){
     if(_qf && window.ResizeObserver) new ResizeObserver(syncFootH).observe(_qf);
     else window.addEventListener('resize', syncFootH);
   } catch(e) { window.addEventListener('resize', syncFootH); }
+  window.addEventListener('resize', syncFabPos);
   window.addEventListener('online', function(){ flushExamQueue(); if(S.user) cloudPushSoon(); });
 })();
 </script>
