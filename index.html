@@ -461,22 +461,22 @@ table.lt tr.top10 td:first-child{color:#9A6A00}
       </div>
       <div class="go" onclick="startRound({mode:'type',t:'judge'})">
         <div class="l"><div class="ic" style="background:#EAF1FA">✔️</div>
-          <div><b>判断题专练</b><div class="sub">共 363 题，快速通刷</div></div></div>
+          <div><b>判断题专练</b><div class="sub">共 <span id="c-judge">0</span> 题，快速通刷</div></div></div>
         <div class="ar">›</div>
       </div>
       <div class="go" onclick="startRound({mode:'type',t:'single'})">
         <div class="l"><div class="ic" style="background:#EAF7F1">🔤</div>
-          <div><b>单选题专练</b><div class="sub">共 703 题，法律条文为主</div></div></div>
+          <div><b>单选题专练</b><div class="sub">共 <span id="c-single">0</span> 题，法律条文为主</div></div></div>
         <div class="ar">›</div>
       </div>
       <div class="go" onclick="startRound({mode:'type',t:'multi'})">
         <div class="l"><div class="ic" style="background:#FCF3E2">🔢</div>
-          <div><b>多选题专练</b><div class="sub">共 202 题，最容易失分</div></div></div>
+          <div><b>多选题专练</b><div class="sub">共 <span id="c-multi">0</span> 题，最容易失分</div></div></div>
         <div class="ar">›</div>
       </div>
       <div class="go" onclick="startRound({mode:'type',t:'img'})">
         <div class="l"><div class="ic" style="background:#F3EDFA">🖼️</div>
-          <div><b>识图题专练</b><div class="sub">共 84 题，看图识别违法行为</div></div></div>
+          <div><b>识图题专练</b><div class="sub">共 <span id="c-img">0</span> 题，看图识别违法行为</div></div></div>
         <div class="ar">›</div>
       </div>
       <div class="go" onclick="startRound({mode:'mock'})">
@@ -603,7 +603,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.10.28-1908';
+var APP_VER = '2026.10.29-0831';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -911,6 +911,14 @@ function shadeTab(){
 }
 
 /* ---------------- 首页 ---------------- */
+/* 专项训练题数：从题库实时统计，避免换题库后文案与实际不符 */
+function fillBankCounts(){
+  var c = {judge:0, single:0, multi:0, img:0};
+  BANK.forEach(function(q){ if(c.hasOwnProperty(q.type)) c[q.type]++; });
+  ['judge','single','multi','img'].forEach(function(k){
+    var el = $('c-'+k); if(el) el.textContent = c[k];
+  });
+}
 function refreshHome(){
   if(!S.user) return;
   $('h-name').textContent = S.user.name;
@@ -2181,6 +2189,7 @@ function verCheck(){
   verCheck();
   try{
     deepInit();
+    fillBankCounts();
     ADM.rows = lsGet('cgks_adm_rows', []) || [];
     if(!Array.isArray(ADM.rows)) ADM.rows=[];   /* 兼容旧版残留的非数组脏数据 */
     ADM.rows.forEach(function(r){ r.score=r.score||0; r.seen=r.seen||0; if(!r.daily||typeof r.daily!=='object') r.daily={}; });
