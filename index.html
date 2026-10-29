@@ -403,9 +403,9 @@ table.lt tr.top10 td:first-child{color:#9A6A00}
           <input id="i-dept2" type="text" placeholder="如：机关法制科" maxlength="18">
         </div>
         <div class="field" style="margin-bottom:8px">
-          <label>身份证号码</label>
-          <input id="i-id" type="text" inputmode="numeric" placeholder="18 位身份证号，末位可为 X" maxlength="18" autocomplete="off">
-          <div class="hint">用于识别个人学习档案，本机保存，不上传网络</div>
+          <label>身份证号后 6 位</label>
+          <input id="i-id" type="text" inputmode="numeric" placeholder="请输入身份证号后 6 位" maxlength="6" autocomplete="off">
+          <div class="hint">只需后 6 位，用于区分同名队员；本机保存，不收集完整身份证号</div>
         </div>
         <div class="err" id="login-err"></div>
         <div class="chk" onclick="toggleRemember()" style="cursor:pointer">
@@ -603,7 +603,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.10.29-0831';
+var APP_VER = '2026.10.29-0849';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -680,6 +680,48 @@ function toggleRemember(){
 $('i-dept').addEventListener('change', function(){
   $('f-dept-other').style.display = (this.value.indexOf('其他')===0) ? 'block' : 'none';
 });
+/* 兼容旧版：2026-10-29 之前用完整身份证号作存储键（cgks_rec_<18位>）与免登录凭证。
+   改为「后 6 位」后，老队员首次登录时把旧键的记录/配置/未完成练习迁到新键，进度不丢。 */
+function migrateLegacyId(id6){
+  try{
+    /* 迁移目标：本次登录者 + 本机上次记住的人（换人登录时，上一个人的旧键不至于变成孤儿） */
+    var targets = [id6];
+    var cur = lsGet('cgks_cur', null);
+    if(cur && cur.id && String(cur.id).length>6){
+      var c6 = String(cur.id).slice(-6).toUpperCase();
+      if(targets.indexOf(c6)<0) targets.push(c6);
+    }
+    var olds = [], i, k, m;
+    for(i=0;i<localStorage.length;i++){
+      k = localStorage.key(i);
+      if(!k) continue;
+      m = /^cgks_(rec|day|cfg|round)_(.+)$/.exec(k);
+      if(!m || m[2].length<=6) continue;   /* 非目标前缀 / 已是后 6 位键 */
+      var tail = m[2].slice(-6).toUpperCase();
+      if(targets.indexOf(tail)<0) continue; /* 不是这些人的 */
+      olds.push({ raw:k, type:m[1], id6:tail });
+    }
+    for(i=0;i<olds.length;i++){
+      var o = olds[i];
+      var nk = 'cgks_' + o.type + '_' + o.id6;
+      var nv = localStorage.getItem(nk);
+      var ov = localStorage.getItem(o.raw);
+      /* 新键已有数据则不覆盖（用户可能已在新版上练过）；旧值意外为空时不写入 "null" */
+      if(nv===null && ov!==null) localStorage.setItem(nk, ov);
+      localStorage.removeItem(o.raw);
+    }
+    if(cur && cur.id && String(cur.id).length>6){ cur.id = String(cur.id).slice(-6); lsSet('cgks_cur', cur); }
+    var us = lsGet('cgks_users', []);
+    if(Array.isArray(us)){
+      var out = [];
+      us.forEach(function(x){
+        var v = String(x).length>6 ? String(x).slice(-6) : String(x);
+        if(out.indexOf(v)<0) out.push(v);   /* 截短后可能重复，去重 */
+      });
+      lsSet('cgks_users', out);
+    }
+  }catch(e){}
+}
 function doLogin(){
   var name = ($('i-name').value||'').trim();
   var dept = $('i-dept').value;
@@ -690,9 +732,11 @@ function doLogin(){
   e.classList.remove('on');
   if(name.length<2) return fail('请填写姓名（至少 2 个字）');
   if(!dept) return fail('请选择或填写所在部门');
-  if(!/^\d{17}[\dX]$/.test(id) && !/^\d{15}$/.test(id)) return fail('身份证号格式不正确，请检查（18 位，末位可为 X）');
+  if(!/^\d{5}[\dX]$/.test(id)) return fail('请输入身份证号后 6 位（6 位，末位可能是 X）');
 
-  S.user = {name:name, dept:dept, id:id, ts:Date.now(), idcard:id};
+  migrateLegacyId(id);   /* 老版本用完整身份证号存储，首次登录自动迁移记录，避免进度归零 */
+  /* 只保留后 6 位，不再保存完整身份证号 */
+  S.user = {name:name, dept:dept, id:id, ts:Date.now()};
   S.rec = lsGet(keyRec(), {});
   S.daily = lsGet(keyDay(), {});
   var dkl = dayKey();
@@ -922,7 +966,7 @@ function fillBankCounts(){
 function refreshHome(){
   if(!S.user) return;
   $('h-name').textContent = S.user.name;
-  $('h-dept').textContent = S.user.dept + ' · 证件尾号 ' + S.user.id.slice(-4);
+  $('h-dept').textContent = S.user.dept + ' · 证件尾号 ' + S.user.id.slice(-6);
 
   var total = BANK.length, seen=0, master=0, wrong=0, ans=0, right=0;
   BANK.forEach(function(q){
@@ -1517,13 +1561,10 @@ function renderMe(){
   var total=BANK.length, seen=0, master=0, wrong=0;
   BANK.forEach(function(q){ var r=S.rec[q.id];
     if(r&&r.s>0){ seen++; if(r.w>0) wrong++; if(r.k>=2) master++; } });
-  var sex = S.user.id.length===18 ? (parseInt(S.user.id.substr(16,1),10)%2 ? '男':'女') : '';
-  var birth = S.user.id.length===18 ? (S.user.id.substr(6,4)+'-'+S.user.id.substr(10,2)+'-'+S.user.id.substr(12,2)) : '';
   var h = '<div class="card"><div class="sec-t">个人信息</div>'
     + '<div class="stat-l"><span>姓名</span><b>'+esc(S.user.name)+'</b></div>'
     + '<div class="stat-l"><span>部门</span><b>'+esc(S.user.dept)+'</b></div>'
-    + '<div class="stat-l"><span>身份证号</span><b>'+S.user.id.slice(0,6)+'********'+S.user.id.slice(-4)+'</b></div>'
-    + (birth? '<div class="stat-l"><span>出生日期 / 性别</span><b>'+birth+' · '+sex+'</b></div>':'')
+    + '<div class="stat-l"><span>证件号后 6 位</span><b>'+esc(S.user.id)+'</b></div>'
     + '</div>';
 
   h += '<div class="card"><div class="sec-t">学习设置</div>'
@@ -2195,6 +2236,8 @@ function verCheck(){
     ADM.rows.forEach(function(r){ r.score=r.score||0; r.seen=r.seen||0; if(!r.daily||typeof r.daily!=='object') r.daily={}; });
     var cur = lsGet('cgks_cur', null);
     if(cur && cur.id){
+      /* 旧版记住的是完整身份证号：统一截为后 6 位并迁移本地记录 */
+      if(String(cur.id).length>6){ migrateLegacyId(String(cur.id).slice(-6)); cur.id = String(cur.id).slice(-6); }
       S.user = cur;
       S.rec = lsGet(keyRec(), {}) || {};
       if(typeof S.rec!=='object'||Array.isArray(S.rec)) S.rec={};
