@@ -344,6 +344,10 @@ textarea.adm:focus{outline:none;border-color:var(--navy2)}
 .wcard.open .wimg{display:block}
 table.lt tr.top10 td{background:#FFF3C9 !important;font-weight:700}
 table.lt tr.top10 td:first-child{color:#9A6A00}
+.fx-clock{font-variant-numeric:tabular-nums;font-weight:800;color:#B32525}
+.fx-clock.warn{color:#C2760A}
+.fx-in{width:100%;padding:8px 9px;border:1px solid #DFE3E8;border-radius:8px;font-size:13px;font-family:inherit;background:#fff;color:#1B2733;margin-top:4px}
+.fx-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 </style>
 </head>
 <body>
@@ -453,6 +457,7 @@ table.lt tr.top10 td:first-child{color:#9A6A00}
       <button class="btn" id="h-start" onclick="startRound()">开始每日任务</button>
       <div class="muted" style="text-align:center;margin:9px 0 14px" id="h-startHint"></div>
 
+      <div id="fx-home"></div>
       <div class="sec-t">专项训练</div>
       <div class="go" onclick="startRound({mode:'wrong'})">
         <div class="l"><div class="ic" style="background:#FDEDED">🔁</div>
@@ -481,7 +486,7 @@ table.lt tr.top10 td:first-child{color:#9A6A00}
       </div>
       <div class="go" onclick="startRound({mode:'mock'})">
         <div class="l"><div class="ic" style="background:#EDF3FA">📝</div>
-          <div><b>测试</b><div class="sub">判断20×1.5+单选20×1.5+多选10×2+识图10×2 · 满分100 · 交卷后出分</div></div></div>
+          <div><b>模拟练习</b><div class="sub">判断20×1.5+单选20×1.5+多选10×2+识图10×2 · 满分100 · 只在本机出分、不计正式成绩</div></div></div>
         <div class="ar">›</div>
       </div>
     </div>
@@ -618,7 +623,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.11.13-1016';
+var APP_VER = '2026.11.13-1208';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -638,9 +643,12 @@ function examHisSave(h){ lsSet('cgks_exam_his', h); }
 /* 未完成的本轮练习落盘：刷新/关掉页面后可继续，不丢进度 */
 function saveRound(){
   if(!S.round){ try{ localStorage.removeItem(keyRound()); }catch(e){} return; }
+  /* 模拟考试不落盘：它只是练手，绝不能变成"可续做的正式卷" */
+  if(S.round.demo){ try{ localStorage.removeItem(keyRound()); }catch(e){} return; }
   lsSet(keyRound(), {
     title:S.round.title, mock:!!S.round.mock, i:S.round.i,
     right:S.round.right, wrong:S.round.wrong, t0:S.round.t0,
+    formal:!!S.round.formal, sess:S.round.sess||'', endAt:S.round.endAt||0,
     ids:S.round.qs.map(function(q){ return q.id; }),
     log:S.round.log, ans:S.round.ans
   });
@@ -649,6 +657,7 @@ function clearRound(){ try{ localStorage.removeItem(keyRound()); }catch(e){} }
 function pendingRound(){
   var r = lsGet(keyRound(), null);
   if(!r || !r.ids || !r.ids.length) return null;
+  if(r.demo){ clearRound(); return null; }
   var i = r.i; while(i < r.ids.length && ((r.mock && r.ans && r.ans[i] && r.ans[i].length) || (r.log && r.log[i]))) i++;
   if(i >= r.ids.length) return null;
   return {data:r, at:i};
@@ -657,8 +666,10 @@ function resumeRound(){
   var p = pendingRound(); if(!p){ toast('没有未完成的练习'); return; }
   var d = p.data, qs = d.ids.map(function(id){ return QMAP[id]; }).filter(Boolean);
   S.round = {qs:qs, title:d.title, mock:d.mock, i:p.at, right:d.right||0, wrong:d.wrong||0,
-             log:d.log||[], ans:d.ans||{}, t0:d.t0||Date.now(), done:false};
+             log:d.log||[], ans:d.ans||{}, t0:d.t0||Date.now(), done:false,
+             formal:!!d.formal, demo:!!d.demo, sess:d.sess||'', endAt:d.endAt||0};
   go('quiz'); renderQ();
+  if(S.round.formal) startFormalClock();
 }
 
 /* ---------------- 工具 ---------------- */
@@ -921,7 +932,7 @@ function go(v, noPush){
   window.scrollTo(0,0);
   /* 离开答题页时把底部补偿恢复为默认（非答题页底部是主导航，高度固定） */
   if(v!=='quiz') document.documentElement.style.setProperty('--foot-h', '96px');
-  if(v==='home') refreshHome();
+  if(v==='home'){ refreshHome(); refreshExamHome(); }
   if(v==='wrongs') renderWrongs();
   if(v==='stats') renderStats();
   if(v==='me') renderMe();
@@ -1064,6 +1075,13 @@ function quitQuiz(){
   var R = S.round;
   var touched = !!R && (R.i > 0 || (R.ans && Object.keys(R.ans).length > 0)
                         || (R.log && R.log.length > 0) || R.right > 0 || R.wrong > 0);
+  if(R && R.formal && !R.demo){
+    if(!confirm('正式考试中途退出，计时不会暂停。\n回首页后点「进入正式考试」可接着做，确定退出？')) return;
+    stopFormalClock();
+    S.round = null;            /* 保留存档，回来可续做 */
+    go('home');
+    return;
+  }
   if(touched){
     if(!confirm('退出后本组进度不保存，确定退出吗？')) return;
   }
@@ -1072,8 +1090,13 @@ function quitQuiz(){
 function renderQ(){
   var R = S.round; if(!R) return go('home');
   var q = R.qs[R.i], exam = !!R.mock;
-  $('qz-title').textContent = R.title + (exam? ' · 计时中' : '');
-  $('qz-count').textContent = (R.i+1) + ' / ' + R.qs.length;
+  $('qz-title').textContent = R.title + (R.demo? ' · 模拟考试' : (R.formal? ' · 正式考试' : (exam? ' · 计时中' : '')));
+  if(R.formal){
+    var _lf = (R.endAt||0) - Date.now();
+    $('qz-count').innerHTML = '<b id="qz-clock" class="fx-clock' + (_lf < 300000 ? ' warn' : '') + '">' + mmss(_lf) + '</b> · ' + (R.i+1) + ' / ' + R.qs.length;
+  }else{
+    $('qz-count').textContent = (R.i+1) + ' / ' + R.qs.length;
+  }
   $('qz-prog').style.width = (R.i/R.qs.length*100).toFixed(1)+'%';
   if(exam){ updateExamBar(); }
   else{
@@ -1130,7 +1153,7 @@ function renderQ(){
   saveRound();
   window.scrollTo(0,0);
 }
-function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function qtypeTag(q){
   var h = '<span class="pill '+TYPE_P[q.type]+'">'+TYPE_CN[q.type]+'</span>';
   if(S.round && S.round.mock) return h;   /* 考试模式不显示掌握/错题提示 */
@@ -1334,14 +1357,17 @@ function updateExamBar(){
   applySheet();
 }
 function jumpTo(i){ var R = S.round; if(!R || !R.mock) return; R.i = i; SHEET_OPEN = false; renderQ(); }
-function handIn(){
+function handIn(force){
   var R = S.round; if(!R || !R.mock || R.done) return;
   var miss = [];
   R.qs.forEach(function(q,i){ if(!(R.ans[i] && R.ans[i].length)) miss.push(i+1); });
-  if(miss.length){
+  /* 先问再停表：用户点“取消”必须继续计时，否则倒计时停了、到点也不会自动收卷 */
+  if(miss.length && !force){
     var show = miss.slice(0,15).join('、') + (miss.length>15?'…':'');
-    if(!confirm('还有 '+miss.length+' 题未作答（第 '+show+' 题），确定交卷吗？')) return;
+    var ok = confirm('还有 '+miss.length+' 题未作答（第 '+show+' 题），确定交卷吗？');
+    if(!ok){ if(R.formal) startFormalClock(); return; }
   }
+  stopFormalClock();
   R.right = 0; R.wrong = 0; R.log = [];
   R.qs.forEach(function(q,i){
     var chosen = (R.ans[i]||[]).slice();
@@ -1435,7 +1461,9 @@ function showResult(){
   if(!S.daily[dk]) S.daily[dk] = {n:0, r:0};
   S.daily[dk].g = (S.daily[dk].g||0)+1;
   saveDay();
-  if(R.mock) examPush(parseFloat(score), used);   /* 模拟测试交卷 → 上传考试榜单 */
+  /* 正式考试：本机记下已交，换手机/清缓存也改不了成绩；模拟考试只出分不上报 */
+  if(R.formal && !R.demo){ lsSet(formalDoneKey(R.sess), {s:parseFloat(score), u:used, at:Date.now(), d:dayKey()}); }
+  if(R.formal && !R.demo) examPush(parseFloat(score), used, R.sess);
   $('rs-body').innerHTML = body;
   S.round = null;
   clearRound();
@@ -1832,6 +1860,7 @@ function adminExit(){
 }
 function renderAdmin(){
   try{ renderAdminCore(); }catch(e){ if(window.showFatal) showFatal('管理后台渲染失败：'+((e&&e.message)||e)); }
+  try{ gatePull(true); }catch(e){}
 }
 function renderAdminCore(){
   var back = $('ad-back');
@@ -1882,6 +1911,7 @@ function renderAdminCore(){
   h += '<div class="chips" style="margin-top:-4px;margin-bottom:10px"><span>今日活跃 <b>'+actN+'</b> 人</span><span>今日已做 <b>'+todayN+'</b> 题</span><span>今日 <b>'+todayG+'</b> 组</span></div>';
 
   h += cloudCard();
+  h += '<div id="fx-wrap">' + gateCard() + '</div>';
   h += '<div id="ex-wrap">' + examCard() + '</div>';
   h += '<div class="card"><div class="sec-t">粘贴上报码汇总（备用方式）</div>'
     + '<div class="muted" style="margin-bottom:9px;line-height:1.8">把队员发到群里的上报码<b>整段粘贴</b>进来即可（每行一条；聊天记录里的其他文字会自动忽略）。同一人重复上报时取最近一次的数据。</div>'
@@ -2137,13 +2167,249 @@ function fmtUsed(s){ return Math.floor(s/60)+'′'+pad(s%60)+'″'; }
 /* 成绩离线队列：先落盘后发送，确保考试成绩不因扩展拦截/网络抖动丢失 */
 function examQueueGet(){ var q = lsGet('cgks_ex_q', []); return Array.isArray(q) ? q : []; }
 function examQueueSave(q){ lsSet('cgks_ex_q', Array.isArray(q) ? q : []); }
+/* ---------------- 正式考试（首页模块 · 统一开考 · 个人 60 分钟 · 一次机会） ---------------- */
+/* 考试安排：服务器有场次就以服务器为准；拿不到（离线/旧后端）时按支队通知的默认安排走。
+   2026 年 11 月 20 日 10:45—11:45，每人从自己点“开始”起算 60 分钟。 */
+var EXAM_DEF = {
+  id: 'EXAM20261120',
+  title: '全员执法资格测试',
+  startAt: '2026-11-20T10:45:00+08:00',
+  endAt: '2026-11-20T11:45:00+08:00',
+  durationMin: 60,
+  lastEntryMin: 30
+};
+var FX_STATE = null, FX_HOME_TICK = null, FX_SIG = '', FX_GATE_AT = 0, FX_OFF = 0;
+var FX_TICK = null, FX_SEEN = 0;
+/* 管理端场次信息：必须用 var 显式声明。漏声明时首次渲染读它就是 ReferenceError，
+   整个管理后台会直接弹“渲染失败”并停在空白页 */
+var GATE = null;
+
+function fmtClock(iso){
+  if(!iso) return '';
+  var d = new Date(iso); if(isNaN(d.getTime())) return '';
+  var w = ['日','一','二','三','四','五','六'][d.getDay()];
+  return (d.getMonth()+1)+'月'+d.getDate()+'日 周'+w+' '+pad(d.getHours())+':'+pad(d.getMinutes());
+}
+function hhmm(iso){
+  var d = new Date(iso); if(isNaN(d.getTime())) return '';
+  return pad(d.getHours())+':'+pad(d.getMinutes());
+}
+function mmss(ms){
+  if(ms < 0) ms = 0;
+  var s = Math.floor(ms/1000);
+  return pad(Math.floor(s/60))+':'+pad(s%60);
+}
+/* “距开考还有 6天23小时12分” */
+function countdownText(ms){
+  if(ms <= 0) return '0秒';
+  var s = Math.floor(ms/1000);
+  var d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60), sec = s%60;
+  if(d > 0) return d+'天'+h+'小时'+m+'分';
+  if(h > 0) return h+'小时'+m+'分';
+  if(m > 0) return m+'分'+sec+'秒';
+  return sec+'秒';
+}
+/* 没有任何服务器场次时的本地判定：完全按上面的默认安排 */
+function fxLocalState(){
+  var st = Date.parse(EXAM_DEF.startAt), en = Date.parse(EXAM_DEF.endAt), now = fxNow();
+  var entry = EXAM_DEF.lastEntryMin ? Math.min(st + EXAM_DEF.lastEntryMin*60000, en) : en;
+  var status = now < st ? 'pending' : (now < entry ? 'open' : 'ended');
+  return { status:status, canStart:status==='open', id:EXAM_DEF.id, title:EXAM_DEF.title,
+    startAt:EXAM_DEF.startAt, endAt:EXAM_DEF.endAt,
+    entryDeadline:new Date(entry).toISOString(),
+    durationMin:EXAM_DEF.durationMin, lastEntryMin:EXAM_DEF.lastEntryMin, count:0, local:true };
+}
+/* 以服务器时间为准：手机时钟快/慢几分钟也不会提前或延后收卷 */
+function fxNow(){ return Date.now() + FX_OFF; }
+function fxGate(cb){
+  if(!API_BASE){ cb(fxLocalState()); return; }
+  fetch(apiUrl('/api/exam/state'))
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){
+      if(j && j.ok && j.status && j.status !== 'idle'){
+        FX_GATE_AT = Date.now();
+        if(j.serverNow){ var d = Date.parse(j.serverNow); if(!isNaN(d)) FX_OFF = d - Date.now(); }
+        lsSet('cgks_gate', { status:j.status, id:j.id, startAt:j.startAt, endAt:j.endAt, entryDeadline:j.entryDeadline, durationMin:j.durationMin });
+        cb(j);
+      }else{ FX_GATE_AT = Date.now(); cb(fxLocalState()); }
+    })
+    .catch(function(){ FX_GATE_AT = Date.now(); cb(fxLocalState()); });
+}
+function formalDoneKey(sid){ return 'cgks_fx_' + sid + '_' + (S.user ? S.user.id : 'anon'); }
+function demoKey(sid){ return 'cgks_demo_' + sid + '_' + (S.user ? S.user.id : 'anon'); }
+
+/* 正式卷与模拟卷同规格：全题库按题型随机抽，不受本人做题记录影响 */
+function fxPaperQs(){
+  function pick(t, n){ return shuffle(BANK.filter(function(q){ return q.type === t; })).slice(0, n); }
+  return shuffle(pick('judge',20).concat(pick('single',20), pick('multi',10), pick('img',10)));
+}
+
+function refreshExamHome(){
+  var box = $('fx-home'); if(!box) return;
+  fxGate(function(st){ FX_STATE = st; FX_SIG = ''; paintExamHome(); startHomeTick(); });
+}
+function startHomeTick(){
+  if(FX_HOME_TICK) return;
+  FX_HOME_TICK = setInterval(paintExamHome, 1000);
+}
+function paintExamHome(){
+  var box = $('fx-home'); if(!box || NAV_CUR !== 'home') return;
+  if(!S.user) return;   /* 退出登录后首页还在，但不能再取本机成绩（否则每秒抛异常） */
+  var st = FX_STATE || fxLocalState();
+  /* 到点自动放行：本地已过开考时间但状态还是未开考 → 立刻向服务器要一次最新状态 */
+  var stale = Date.now() - FX_GATE_AT > 60000;
+  var dueNow = st.status === 'pending' && fxNow() >= Date.parse(st.startAt) - 500 && Date.now() - FX_GATE_AT > 3000;
+  if(stale || dueNow){ refreshExamHome(); return; }
+  var done = lsGet(formalDoneKey(st.id), null);
+  var sig = st.status + '|' + (st.canStart?1:0) + '|' + (done ? ('d'+done.s) : '-') + '|' + (lsGet(demoKey(st.id), null)?'x':'-');
+  if(sig !== FX_SIG){ FX_SIG = sig; box.innerHTML = examHomeHTML(st, done); }
+  var cd = $('fx-countdown');
+  if(cd){
+    var ms = Date.parse(st.startAt) - fxNow();
+    cd.textContent = ms > 0 ? ('距开考还有 ' + countdownText(ms)) : '已到开考时间';
+  }
+  var rm = $('fx-remain');
+  if(rm && S.round && S.round.formal) rm.textContent = '剩余 ' + mmss((S.round.endAt||0) - fxNow());
+}
+function examHomeHTML(st, done){
+  var when = fmtClock(st.startAt) + '—' + hhmm(st.endAt);
+  var h = '<div class="card" style="border:1px solid #E7D2A6;background:linear-gradient(180deg,#FFFDF6,#FFFFFF)">'
+    + '<div class="sec-t">正式考试 <span class="muted" style="font-weight:400;font-size:11.5px">' + esc(st.title||'') + '</span></div>';
+  if(done){
+    h += '<div style="text-align:center;padding:4px 0 10px">'
+      + '<div style="font-size:32px;font-weight:800;color:#0E9F6E">' + fmtScore(done.s) + '<small style="font-size:14px"> 分</small></div>'
+      + '<div class="muted">用时 ' + Math.floor((done.u||0)/60) + '′' + pad((done.u||0)%60) + '″ · 已交卷，本场不能再考</div></div>';
+  }else if(st.status === 'pending'){
+    h += '<div style="text-align:center;padding:6px 0 12px">'
+      + '<div class="muted">' + when + ' · 每人 ' + st.durationMin + ' 分钟</div>'
+      + '<div id="fx-countdown" class="fx-count" style="font-size:23px;font-weight:800;color:#0E3A63;margin-top:9px">'
+      + '距开考还有 ' + countdownText(Date.parse(st.startAt)-fxNow()) + '</div>'
+      + '<div class="muted" style="margin-top:7px;line-height:1.75">开考后进入考场，从你点“开始”起算 ' + st.durationMin + ' 分钟<br>交卷即结束，每人只有一次机会</div></div>';
+  }else if(st.status === 'open' && st.canStart){
+    h += '<div class="muted" style="text-align:center;margin:2px 0 10px;line-height:1.8">考试已开始 · 每人 ' + st.durationMin + ' 分钟 · 只有一次机会</div>';
+    /* 离线单文件版没有后端，考前不能让人在这里“考完”却上不了榜 */
+    if(API_BASE) h += '<button class="btn gold" onclick="enterExam()">进入正式考试</button>';
+    else h += '<div class="muted" style="text-align:center;padding:6px 0;line-height:1.8">当前是<b>离线版</b>，不能参加正式考试。<br>请联网打开支队发的线上链接参加。</div>';
+  }else if(st.status === 'open'){
+    h += '<div class="muted" style="text-align:center;padding:10px 0">本场已截止入场，未入场视为缺考。</div>';
+  }else{
+    h += '<div class="muted" style="text-align:center;padding:10px 0">本场考试已结束。</div>';
+  }
+  var used = lsGet(demoKey(st.id), null);
+  if(!done){
+    h += '<div style="height:10px"></div><button class="btn sm ghost" onclick="demoExam()"'
+      + (used ? ' disabled style="opacity:.5"' : '') + '>'
+      + (used ? '模拟考试（本场已用过）' : '模拟考试（仅 1 次，不计成绩）') + '</button>';
+  }
+  return h + '</div>';
+}
+
+/* 进入正式考场 */
+function enterExam(){
+  if(!S.user){ go('login'); return; }
+  if(!API_BASE){ alert('离线版不能参加正式考试。\n请联网打开支队发的线上考试链接参加。'); return; }
+  var st = FX_STATE || fxLocalState();
+  var done = lsGet(formalDoneKey(st.id), null);
+  if(done){ alert('你已交卷，成绩 ' + fmtScore(done.s) + ' 分，本场不能再考。'); return; }
+  /* 上次中途退出：直接续做，不重新计时 */
+  var pend = pendingRound();
+  if(pend && pend.data.formal && !pend.data.demo && pend.data.sess === st.id && (pend.data.endAt||0) > Date.now()+30000){
+    resumeRound(); return;
+  }
+  if(st.status === 'pending'){
+    alert('正式考试将于 ' + fmtClock(st.startAt) + ' 统一开始。\n距开考还有 ' + countdownText(Date.parse(st.startAt)-fxNow()) + '。');
+    return;
+  }
+  if(!st.canStart){ alert('本场已截止入场。'); return; }
+  if(!confirm('正式考试\n共 60 题，限时 ' + st.durationMin + ' 分钟（从你点开始算）\n交卷后不能重考，中途退出计时不停\n\n现在开始答题？')) return;
+  var goPaper = function(deadline, sid){
+    var left = deadline - fxNow();
+    if(left <= 60000){ alert('本场即将收卷，无法再开始。'); return; }
+    S.round = {
+      qs:fxPaperQs(), title:st.title || '正式考试', mock:true, formal:true, sess:sid,
+      i:0, right:0, wrong:0, log:[], ans:{}, t0:Date.now(), endAt:deadline
+    };
+    S.idx = 0; SHEET_OPEN = false;
+    saveRound();
+    go('quiz'); renderQ(); startFormalClock();
+  };
+  fetch(apiUrl('/api/exam/start'), {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ uname:S.user.name, dept:S.user.dept, id6:String(S.user.id).slice(-6), sess:st.id })
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if(j && j.ok){ goPaper(Date.parse(j.deadline), j.id || st.id); return; }
+    if(j && j.error === 'not-open'){ alert('正式考试尚未开始或已截止入场，请稍后刷新首页再试。'); return; }
+    if(j && j.error === 'ended'){ alert('本场考试已收卷，不能再进入。'); return; }
+    alert('网络异常，未能进入考场。请检查网络后重试；多次失败请联系监考人员。');
+  }).catch(function(){
+    alert('网络异常，未能进入考场。请检查网络后重试；多次失败请联系监考人员。');
+  });
+}
+
+/* 模拟考试：每人每场限 1 次，只出分、不计成绩、不上榜 */
+function demoExam(){
+  if(!S.user){ go('login'); return; }
+  var st = FX_STATE || fxLocalState();
+  var k = demoKey(st.id);
+  if(lsGet(k, null)){ alert('本场模拟考试已用过（每人限 1 次）。'); return; }
+  if(!confirm('模拟考试用于熟悉流程：60 题、限时 ' + st.durationMin + ' 分钟。\n成绩只在本机显示，不计入正式成绩、不上榜。\n本场只能模拟 1 次，确定开始？')) return;
+  lsSet(k, { at: Date.now() });
+  S.round = {
+    qs:fxPaperQs(), title:'模拟考试', mock:true, formal:true, demo:true, sess:st.id,
+    i:0, right:0, wrong:0, log:[], ans:{}, t0:Date.now(), endAt:Date.now() + (st.durationMin||60)*60000
+  };
+  S.idx = 0; SHEET_OPEN = false;
+  go('quiz'); renderQ(); startFormalClock();
+}
+
+/* 考试倒计时：到 0 自动交卷 */
+function startFormalClock(){
+  stopFormalClock();
+  FX_SEEN = 0;
+  FX_TICK = setInterval(function(){
+    var R = S.round;
+    if(!R || !R.formal){ stopFormalClock(); return; }
+    var left = (R.endAt || 0) - fxNow(), el = $('qz-clock');
+    if(el){
+      el.textContent = mmss(left);
+      el.className = 'fx-clock' + (left < 300000 ? ' warn' : '');
+    }
+    /* 每 20 秒对一次闸门：管理员一旦收卷，本地立即强制交卷，不用等个人时长跑完 */
+    if(++FX_SEEN % 20 === 0) fxWatchGate();
+    if(left <= 0){
+      stopFormalClock();
+      toast('考试时间到，正在自动交卷');
+      handIn(true);
+    }
+  }, 1000);
+}
+/* 考试中与服务器对时 + 探测收卷。任何异常一律静默，不能影响答题 */
+function fxWatchGate(){
+  var R = S.round;
+  if(!API_BASE || !R || !R.formal || R.demo) return;
+  fetch(apiUrl('/api/exam/state'))
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){
+      if(!j || !j.ok) return;
+      if(j.serverNow){ var d = Date.parse(j.serverNow); if(!isNaN(d)) FX_OFF = d - Date.now(); }
+      var C = S.round;
+      if(C && C.formal && !C.demo && j.status === 'ended'){
+        stopFormalClock();
+        toast('监考已收卷，正在交卷');
+        handIn(true);
+      }
+    })
+    .catch(function(){});
+}
+function stopFormalClock(){ if(FX_TICK){ clearInterval(FX_TICK); FX_TICK = null; } }
+
 var EXQ_SENDING = false, EXQ_TIMER = null;
-function examPush(score, used){
+function examPush(score, used, sess){
   if(!S.user || !API_BASE) return;
   var q = examQueueGet();
   q.push({ uname:S.user.name, dept:S.user.dept,
     id6:String(S.user.id).slice(-6), score:score, max:100,
-    used:used, ts:new Date().toISOString() });
+    used:used, sess:sess||'', ts:new Date().toISOString() });
   examQueueSave(q);
   flushExamQueue();
 }
@@ -2193,7 +2459,7 @@ function examAutoToggle(){
   }
 }
 function examClear(){
-  if(!confirm('确定清空考试榜单吗？建议在统一开考前执行。')) return;
+  if(!confirm('确定清空正式考试榜吗？\n清空前会自动归档留底，需要时可以找回。')) return;
   fetch(apiUrl('/api/exam/reset'), { method:'POST', headers: admHeaders() })
     .then(function(r){ if(r.status===401){ admLogout(); renderAdmin(); toast('登录已过期'); return null; } return r.json(); })
     .then(function(j){ if(j && j.ok){ ADM_EX.rows = []; renderExam(); toast('榜单已清空'); } })
@@ -2205,13 +2471,113 @@ function examSorted(){
     return (a.used||0) - (b.used||0);
   });
 }
+function fxClockVal(iso){
+  if(!iso) return '';
+  var d = new Date(iso); if(isNaN(d.getTime())) return '';
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+}
+function fxPost(path, body, cb){
+  fetch(apiUrl(path), { method:'POST', headers: admHeaders(), body: JSON.stringify(body||{}) })
+    .then(function(r){ if(r.status===401){ admLogout(); renderAdmin(); toast('登录已过期'); return null; } return r.json(); })
+    .then(function(j){ if(!j) return; if(!j.ok){ toast(j.error || '操作失败'); return; } if(cb) cb(j); })
+    .catch(function(){ toast('网络异常，操作未生效'); });
+}
+function fxCreate(){
+  var s = $('fx-start').value, e = $('fx-end').value;
+  if(!s || !e){ toast('请先填开考与结束时间'); return; }
+  var st = new Date(s), en = new Date(e);
+  if(!(en.getTime() > st.getTime())){ toast('结束时间必须晚于开考时间'); return; }
+  if(!confirm('新建场次会先把当前榜单成绩归档，再归零。\n开考：' + s.replace('T',' ') + '\n结束：' + e.replace('T',' ') +
+    '\n时长：' + $('fx-dur').value + ' 分钟\n\n确定建立？')) return;
+  fxPost('/api/exam/session', {
+    title: $('fx-title').value || '正式考试',
+    startAt: st.toISOString(), endAt: en.toISOString(),
+    durationMin: parseInt($('fx-dur').value, 10) || 60,
+    lastEntryMin: parseInt($('fx-entry').value, 10) || 0
+  }, function(j){
+    ADM_EX.rows = []; renderExam();
+    gatePull(true);
+    toast('场次已建立：' + fmtClock(j.session.startAt) + ' 自动开考');
+  });
+}
+function fxEdit(){
+  var s = $('fx-start').value, e = $('fx-end').value;
+  var body = { title: $('fx-title').value || '', durationMin: parseInt($('fx-dur').value, 10) || 60,
+               lastEntryMin: parseInt($('fx-entry').value, 10) || 0 };
+  if(s) body.startAt = new Date(s).toISOString();
+  if(e) body.endAt = new Date(e).toISOString();
+  fxPost('/api/exam/session/edit', body, function(j){ gatePull(true); toast('已更新：' + fmtClock(j.session.startAt) + ' 开考'); });
+}
+function fxAct(act, minutes){
+  var msg = act==='open' ? '立即开考？开考后队员即可进入正式考试。'
+          : act==='end' ? '立即收卷？收卷后本场不能再交卷，已开始的人也会被终止。'
+          : '把开考时间整体推后 ' + minutes + ' 分钟？';
+  if(!confirm(msg)) return;
+  fxPost('/api/exam/session/act', { act: act, minutes: minutes || 0 }, function(j){
+    gatePull(true);
+    toast(act==='open' ? '已提前开考' : act==='end' ? '已收卷' : '已推后 ' + minutes + ' 分钟');
+  });
+}
+function gateCard(){
+  var g = GATE || {}, st = g.status || 'idle';
+  var cn = { idle:'未建场次', pending:'未开考', open:'考试进行中', ended:'已收卷' }[st] || st;
+  var color = st==='open' ? '#B32525' : (st==='pending' ? '#C2760A' : '#5A6875');
+  var info = '尚未建立场次。未建场次时队员端按默认安排（11月20日 10:45）显示倒计时。';
+  if(st !== 'idle'){
+    info = '当前场次：<b>' + esc(g.title||'正式考试') + '</b><br>' + fmtClock(g.startAt) + ' 开考 / ' + fmtClock(g.endAt) + ' 结束'
+         + ' · 每人 <b>' + (g.durationMin||60) + '</b> 分钟 · 最晚入场 ' + (g.lastEntryMin ? ('开考后 ' + g.lastEntryMin + ' 分钟') : '到结束为止')
+         + '<br>已交卷 <b>' + (g.count||0) + '</b> 人 · ' + cn;
+  }
+  return '<div class="card"><div class="sec-t">正式考场控制 <span style="font-weight:700;color:'+color+'">· '+cn+'</span></div>'
+    + '<div class="muted" id="fx-stat" style="line-height:1.85;margin-bottom:9px">' + info + '</div>'
+    + '<div class="fx-grid">'
+    +   '<label style="font-size:12px;color:#5A6875">开考时间<input class="fx-in" type="datetime-local" id="fx-start" value="'+fxClockVal(g.startAt)+'"></label>'
+    +   '<label style="font-size:12px;color:#5A6875">结束时间<input class="fx-in" type="datetime-local" id="fx-end" value="'+fxClockVal(g.endAt)+'"></label>'
+    + '</div>'
+    + '<div class="fx-grid" style="margin-top:8px">'
+    +   '<label style="font-size:12px;color:#5A6875">考试时长（分钟）<input class="fx-in" type="number" min="1" max="240" id="fx-dur" value="'+(g.durationMin||60)+'"></label>'
+    +   '<label style="font-size:12px;color:#5A6875">最晚入场（开考后分钟）<input class="fx-in" type="number" min="0" max="180" id="fx-entry" value="'+(g.lastEntryMin!=null?g.lastEntryMin:30)+'"></label>'
+    + '</div>'
+    + '<label style="font-size:12px;color:#5A6875;display:block;margin-top:8px">场次名称<input class="fx-in" id="fx-title" value="'+esc(g.title||'全员执法资格测试')+'"></label>'
+    + '<div class="row" style="gap:8px;margin-top:10px">'
+    +   '<button class="btn sm gold" style="flex:1" onclick="fxCreate()">新建场次（归档旧成绩）</button>'
+    +   '<button class="btn sm ghost" style="flex:0 0 84px" onclick="fxEdit()">保存时间</button>'
+    + '</div>'
+    + '<div class="row" style="gap:8px;margin-top:8px">'
+    +   '<button class="btn sm ghost" style="flex:1" onclick="fxAct(\'open\')">立即开考</button>'
+    +   '<button class="btn sm ghost" style="flex:1" onclick="fxAct(\'delay\',30)">推后30分钟</button>'
+    +   '<button class="btn sm ghost" style="flex:1" onclick="fxAct(\'end\')">立即收卷</button>'
+    + '</div>'
+    + '<div class="muted" style="margin-top:9px;line-height:1.75;font-size:11.5px">开考到点自动放行；每人从自己点“开始”起算时长，到点自动收卷。试卷由全题库随机抽取，全场同规格、每人不同。</div>'
+    + '</div>';
+}
+function gatePull(force){
+  fetch(apiUrl('/api/exam/state'))
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){
+      if(!j || !j.ok) return;
+      GATE = j;
+      var el = $('fx-stat'), w = $('fx-wrap');
+      var busy = document.activeElement && /^fx-/.test(document.activeElement.id || '');
+      if(w && force && !busy){ w.innerHTML = gateCard(); return; }
+      if(el && j.status){
+        var cn = { idle:'未建场次', pending:'未开考', open:'考试进行中', ended:'已收卷' }[j.status] || j.status;
+        el.innerHTML = (j.status === 'idle')
+          ? '尚未建立场次。未建场次时队员端按默认安排（11月20日 10:45）显示倒计时。'
+          : ('当前场次：<b>' + esc(j.title||'正式考试') + '</b><br>' + fmtClock(j.startAt) + ' 开考 / ' + fmtClock(j.endAt) + ' 结束'
+             + ' · 每人 <b>' + (j.durationMin||60) + '</b> 分钟 · 已交卷 <b>' + (j.count||0) + '</b> 人 · ' + cn);
+      }
+    })
+    .catch(function(){});
+}
+
 function examCard(){
   var n = ADM_EX.rows.length;
   var done10 = examSorted().slice(0, 10);
   var avg = n ? Math.round(examSorted().reduce(function(s,x){return s+x.score;},0)/n*10)/10 : 0;
-  var h = '<div class="card"><div class="sec-t">考试实时榜单（总分降序 · 同分按用时短优先）<span class="muted" style="font-weight:400;font-size:11.5px"> 已交卷 '+n+' 人 · 平均 '+avg+' 分</span></div>';
+  var h = '<div class="card"><div class="sec-t">正式考试成绩榜（总分降序 · 同分按用时短优先）<span class="muted" style="font-weight:400;font-size:11.5px"> 已交卷 '+n+' 人 · 平均 '+avg+' 分</span></div>';
   if(!n){
-    h += '<div class="muted" style="text-align:center;padding:12px 0;line-height:1.9">暂无人交卷。<br>队员完成「测试」交卷后即自动进入榜单；开考前可点「清空榜单」。</div>';
+    h += '<div class="muted" style="text-align:center;padding:12px 0;line-height:1.9">暂无人交卷。<br>开场前请先在上方建立场次并归档旧成绩；队员在开考后交卷即自动入榜。</div>';
   }else{
     h += '<div class="lt-wrap"><table class="lt"><thead><tr><th>名次</th><th>姓名</th><th>部门</th><th>总分</th><th>用时</th><th>交卷时间</th></tr></thead><tbody>';
     examSorted().forEach(function(x, i){
@@ -2227,7 +2593,7 @@ function examCard(){
   h += '<div style="height:9px"></div><div class="row" style="gap:8px">'
     + '<button class="btn sm gold" style="flex:1" onclick="examPull()">刷新榜单</button>'
     + '<button class="btn sm ghost" style="flex:1" id="ex-auto" onclick="examAutoToggle()">▶ 自动刷新</button>'
-    + '<button class="btn sm ghost" style="flex:0 0 92px" onclick="examClear()">清空榜单</button></div>';
+    + '<button class="btn sm ghost" style="flex:0 0 92px" onclick="examClear()">归档并清空</button></div>';
   return h + '</div>';
 }
 function renderExam(){
@@ -2259,6 +2625,7 @@ function verCheck(){
     }
   }catch(e){}
   verCheck();
+  refreshExamHome();
   try{
     deepInit();
     fillBankCounts();
