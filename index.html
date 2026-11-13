@@ -618,7 +618,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.11.13-0933';
+var APP_VER = '2026.11.13-1016';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -1089,7 +1089,7 @@ function renderQ(){
   var h = '<div class="qtype" id="qtype">'+qtypeTag(q)+'</div>';
   h += '<div class="qtext">'+esc(q.stem)+'</div>';
   if(q.img){
-    h += '<div class="qimg"><img src="'+API_BASE+'/'+q.img+'" alt="题目图片" loading="lazy" onerror="this.style.display=\'none\'"></div>';
+    h += '<div class="qimg"><img src="'+apiUrl('/'+q.img)+'" alt="题目图片" loading="lazy" onerror="this.style.display=\'none\'"></div>';
   }
 
   if(isJudgeLike(q)){
@@ -1408,7 +1408,7 @@ function showResult(){
       var r = S.rec[w.id];
       body += '<div class="it"><div class="no">'+(i+1)+'</div><div class="c">'
             + esc(q.stem)
-            + (q.img? '<img class="rimg" src="'+API_BASE+'/'+q.img+'" loading="lazy" onerror="this.style.display=\'none\'">' : '')
+            + (q.img? '<img class="rimg" src="'+apiUrl('/'+q.img)+'" loading="lazy" onerror="this.style.display=\'none\'">' : '')
             + '<div class="a">正确答案：<b>'+aTxt+'</b> · 本题累计错 '+r.w+' 次</div></div></div>';
     });
     body += '</div></div>';
@@ -1799,7 +1799,7 @@ function adminEnter(){
   var e = $('ad-err');
   if(!v){ if(e){ e.textContent='请输入管理口令'; e.classList.add('on'); } return; }
   if(e){ e.textContent='正在验证…'; e.classList.add('on'); }
-  fetch(API_BASE + '/api/login', {
+  fetch(apiUrl('/api/login'), {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({pass:v})
   }).then(function(r){ return r.json().then(function(j){ return {s:r.status, j:j}; }); })
@@ -2015,6 +2015,15 @@ function copyLedgerText(){
    · 云端不可用时（未开通 / 离线 / 本地打开）全部静默降级，不影响刷题
    ============================================================ */
 var API_BASE = 'https://zhifa-exam.app.workbuddy.host';   /* 单一后端：网页版与 GitHub Pages 版共用，同源/跨域均已放行 */
+/* 平台访问码：带上它，请求即使没有浏览器通行凭证（跨域页面、凭证过期、无痕窗口）也能直达后端。
+   平台若更换访问码，只改这一处 */
+var SHARECODE = 'RGLXCB2RLZ';
+function apiUrl(path){
+  if(!API_BASE) return '';
+  var u = API_BASE + path;
+  if(SHARECODE) u += (u.indexOf('?') < 0 ? '?' : '&') + 'sharecode=' + SHARECODE;
+  return u;
+}
 var CLOUD = { state:'idle', msg:'', lastPush:0, timer:null };
 var CLOUD_GAP = 12000;   /* 两次上报的最小间隔，避免每题都发请求 */
 
@@ -2037,7 +2046,7 @@ function cloudRow(){
 function cloudPush(silent){
   if(!S.user) return;
   if(!API_BASE) return;
-  fetch(API_BASE + '/api/report', {
+  fetch(apiUrl('/api/report'), {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(cloudRow())
   }).then(function(r){
@@ -2079,7 +2088,7 @@ function cloudCard(){
 function cloudPull(silent){
   if(!API_BASE){ if(!silent) toast('未配置云端地址'); return; }
   if(!silent) toast('正在从云端拉取全员台账…');
-  fetch(API_BASE + '/api/all', { headers: admHeaders() })
+  fetch(apiUrl('/api/all'), { headers: admHeaders() })
     .then(function(r){
       if(r.status === 401){
         /* token 失效：退出并回口令框（必须重渲染，否则界面停在空后台） */
@@ -2143,7 +2152,7 @@ function flushExamQueue(){
   var q = examQueueGet();
   if(!q.length) return;
   EXQ_SENDING = true;
-  fetch(API_BASE + '/api/exam', {
+  fetch(apiUrl('/api/exam'), {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(q[0])
   }).then(function(r){
@@ -2160,7 +2169,7 @@ function scheduleExamRetry(){
 }
 function examPull(silent){
   if(!API_BASE) return;
-  fetch(API_BASE + '/api/exam/all', { headers: admHeaders() })
+  fetch(apiUrl('/api/exam/all'), { headers: admHeaders() })
     .then(function(r){
       if(r.status === 401){ if(ADM.on){ admLogout(); renderAdmin(); toast('登录已过期，请重新输入管理口令'); } return null; }
       if(!r.ok) return null;
@@ -2185,7 +2194,7 @@ function examAutoToggle(){
 }
 function examClear(){
   if(!confirm('确定清空考试榜单吗？建议在统一开考前执行。')) return;
-  fetch(API_BASE + '/api/exam/reset', { method:'POST', headers: admHeaders() })
+  fetch(apiUrl('/api/exam/reset'), { method:'POST', headers: admHeaders() })
     .then(function(r){ if(r.status===401){ admLogout(); renderAdmin(); toast('登录已过期'); return null; } return r.json(); })
     .then(function(j){ if(j && j.ok){ ADM_EX.rows = []; renderExam(); toast('榜单已清空'); } })
     .catch(function(){ toast('操作失败，请检查网络'); });
@@ -2231,7 +2240,7 @@ function renderExam(){
 function verCheck(){
   if(location.protocol === 'file:') return;
   try{
-    fetch((typeof API_BASE!=='undefined' && API_BASE ? API_BASE : '') + '/api/ver')
+    fetch(apiUrl('/api/ver'))
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(j){
         if(j && j.ver && typeof APP_VER!=='undefined' && APP_VER !== 'dev' && j.ver !== APP_VER){
@@ -2242,6 +2251,13 @@ function verCheck(){
   }catch(e){}
 }
 (function boot(){
+  /* 平台访问码补全：地址栏里没有 sharecode 时自动补上（域名/页面完全不变），
+     这样队员再收藏、再转发出去的都是能直接打开的完整链接，不会隔一个月又打不开 */
+  try{
+    if(location.protocol.indexOf('http')===0 && /\.workbuddy\.host$/i.test(location.hostname) && !/[?&]sharecode=/i.test(location.search)){
+      history.replaceState(null, '', location.pathname + '?sharecode=' + SHARECODE);
+    }
+  }catch(e){}
   verCheck();
   try{
     deepInit();
