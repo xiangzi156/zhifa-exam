@@ -593,6 +593,21 @@ var CLOUD_CFG = {"endpoint":"https://zhifa-exam.app.workbuddy.host","publishable
 var DEPTS = ["岳阳楼一大队","岳阳楼二大队","岳阳楼三大队","岳阳楼四大队",
              "站场执法大队","君山大队","云溪大队","住建大队","机关科室","其他（手动填写）"];
 
+/* 台账部门展示顺序：机关科室 → 一/二/三/四大队 → 云溪 → 君山 → 住建 → 站场。
+   未列入的部门（如「其他」或手填名称）排在最后，内部按名称排序。 */
+var DEPT_ORDER = ["机关科室","岳阳楼一大队","岳阳楼二大队","岳阳楼三大队","岳阳楼四大队",
+                  "云溪大队","君山大队","住建大队","站场执法大队"];
+function deptRank(d){
+  var i = DEPT_ORDER.indexOf(String(d == null ? '' : d));
+  return i < 0 ? DEPT_ORDER.length : i;
+}
+function deptCmp(a, b){
+  var ra = deptRank(a), rb = deptRank(b);
+  if(ra !== rb) return ra - rb;
+  a = String(a == null ? '' : a); b = String(b == null ? '' : b);
+  return a < b ? -1 : (a > b ? 1 : 0);
+}
+
 var IVL_RIGHT = [1,2,4,7,15,30,60];              /* 答对后：1/2/4/7/15/30/60 天 */
 var IVL_WRONG = [20,10,5];                       /* 答错后：第1次20分钟、第2次10分钟、第3次起5分钟 */
 var D = 86400000, MIN = 60000;
@@ -603,7 +618,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.10.29-0849';
+var APP_VER = '2026.11.13-0933';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -1915,7 +1930,7 @@ function adminLogoutTap(){
 function admTable(rows){
   var byDept = {};
   rows.forEach(function(r){ (byDept[r.dept] = byDept[r.dept] || []).push(r); });
-  var depts = Object.keys(byDept).sort();
+  var depts = Object.keys(byDept).sort(deptCmp);
   var h = '<div class="lt-wrap"><table class="lt"><thead><tr>'
     + '<th>姓名</th><th>部门</th><th>尾号</th><th>已练/总量</th><th>已掌握</th><th>错题</th>'
     + '<th>正确率</th><th>天</th><th>最近练习</th><th>今日做题</th><th>今日登录</th><th>掌握分</th></tr></thead><tbody>';
@@ -1959,8 +1974,8 @@ function admDeptBars(rows){
 }
 function admSorted(){
   return ADM.rows.slice().sort(function(a, b){
-    if(a.dept === b.dept) return b.score - a.score;
-    return a.dept < b.dept ? -1 : 1;
+    var c = deptCmp(a.dept, b.dept);
+    return c !== 0 ? c : (b.score - a.score);
   });
 }
 function exportLedger(){
