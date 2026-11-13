@@ -53,6 +53,12 @@ body{
 .muted{color:var(--sub);font-size:12.5px}
 .sec-t{font-size:13px;font-weight:600;color:var(--navy2);margin:4px 0 10px;display:flex;align-items:center;gap:7px}
 .sec-t::before{content:"";width:3px;height:13px;border-radius:2px;background:linear-gradient(180deg,var(--gold),var(--gold2))}
+/* 管理端两个页签：正式考试 / 日常学习，物理分页，互不干扰 */
+.adm-tabs{display:flex;gap:9px;margin:0 0 12px}
+.adm-tab{flex:1;text-align:center;padding:10px 6px;border:1.5px solid var(--line);border-radius:12px;background:#fff;font-size:13.5px;font-weight:600;color:#5A6875;cursor:pointer;transition:.15s;line-height:1.45;user-select:none}
+.adm-tab em{display:block;font-style:normal;font-size:11px;font-weight:400;color:#8A96A3;margin-top:3px}
+.adm-tab.on{background:linear-gradient(135deg,var(--navy),var(--navy2));border-color:var(--navy);color:#fff;box-shadow:0 6px 14px rgba(19,42,74,.18)}
+.adm-tab.on em{color:rgba(255,255,255,.8)}
 .btn{
   display:block;width:100%;border:0;border-radius:14px;padding:14px;font-size:15.5px;font-weight:600;
   background:linear-gradient(135deg,#1B4471,#0E2240);color:#fff;cursor:pointer;transition:.15s;
@@ -623,7 +629,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.11.13-1252';
+var APP_VER = '2026.11.13-1441';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -1456,11 +1462,14 @@ function showResult(){
                 + (x.ok?'border-color:#B7E7D1;background:#E6F7EF;color:#0E7E58':'border-color:#F6C6C6;background:#FDEDED;color:#B32525')
                 + '">'+(i+1)+'. '+TYPE_CN[q.type].slice(0,2)+(x.ok?' ✓':' ✗')+'</span>';
          }).join('') + '</div></div>';
-  /* 完成一组：计入今日组数（用于每日 5 组目标与鼓励提示） */
+  /* 完成一组计入今日组数（每日 5 组目标）。正式考试与模拟考试不算——
+     它们不写答题记录，若还算组数，会让日常任务进度凭空多出一组 */
   var dk = dayKey();
-  if(!S.daily[dk]) S.daily[dk] = {n:0, r:0};
-  S.daily[dk].g = (S.daily[dk].g||0)+1;
-  saveDay();
+  if(!R.formal){
+    if(!S.daily[dk]) S.daily[dk] = {n:0, r:0};
+    S.daily[dk].g = (S.daily[dk].g||0)+1;
+    saveDay();
+  }
   /* 正式考试：本机记下已交，换手机/清缓存也改不了成绩；模拟考试只出分不上报 */
   if(R.formal && !R.demo){ lsSet(formalDoneKey(R.sess), {s:parseFloat(score), u:used, at:Date.now(), d:dayKey()}); }
   if(R.formal && !R.demo) examPush(parseFloat(score), used, R.sess);
@@ -1734,7 +1743,7 @@ function logout(){
    因此采用「学习上报码」机制：队员端生成一行摘要码 → 发到工作群
    → 管理员在管理后台整段粘贴 → 自动解析、去重、按部门汇总成台账。
    ============================================================ */
-var ADM = { on:false, rows:[] };
+var ADM = { on:false, rows:[], tab:'exam' };
 /* 管理口令只保存在后端（ADMIN_PASS 环境变量），网页上不出现任何密码/默认口令；
  * 登录成功后后端签发临时 token（12 小时有效），前端仅保存 token。 */
 function admHeaders(){
@@ -1901,19 +1910,32 @@ function renderAdminCore(){
     todayG += td ? (td.g||0) : 0;
   });
 
-  var h = '<div class="kpi">'
+  /* 页签硬隔离：正式考试（考场控制 + 正式成绩榜）与日常学习（练习台账）分成两页。
+     掌握分和考试总分是两套完全不同的分制，挤在一页最容易看错；
+     而且「归档并清空」只能清正式成绩，绝不该连带日常台账。 */
+  var TK = (ADM.tab === 'study') ? 'study' : 'exam';
+  var tabs = '<div class="adm-tabs">'
+    + '<div class="adm-tab' + (TK==='exam' ? ' on' : '') + '" onclick="admTab(\'exam\')">正式考试'
+    +   '<em>已交卷 ' + ADM_EX.rows.length + ' 人</em></div>'
+    + '<div class="adm-tab' + (TK==='study' ? ' on' : '') + '" onclick="admTab(\'study\')">日常学习'
+    +   '<em>已汇总 ' + n + ' 人</em></div>'
+    + '</div>';
+
+  var hEx = '<div id="adm-pane-exam"' + (TK==='exam' ? '' : ' style="display:none"') + '>'
+    + '<div id="fx-wrap">' + gateCard() + '</div>'
+    + '<div id="ex-wrap">' + examCard() + '</div>'
+    + '</div>';
+
+  var hSt = '<div id="adm-pane-study"' + (TK==='study' ? '' : ' style="display:none"') + '>'
+    + '<div class="kpi">'
     + '<div><b>' + n + '</b><span>已汇总人数</span></div>'
     + '<div><b>' + Object.keys(deptSet).length + '</b><span>覆盖部门</span></div>'
     + '<div><b>' + (n ? Math.round(seenSum / n) : 0) + '</b><span>人均已练（题）</span></div>'
     + '<div><b>' + (n ? Math.round(scSum / n) : 0) + '</b><span>平均掌握分</span></div>'
-    + '</div>';
-
-  h += '<div class="chips" style="margin-top:-4px;margin-bottom:10px"><span>今日活跃 <b>'+actN+'</b> 人</span><span>今日已做 <b>'+todayN+'</b> 题</span><span>今日 <b>'+todayG+'</b> 组</span></div>';
-
-  h += cloudCard();
-  h += '<div id="fx-wrap">' + gateCard() + '</div>';
-  h += '<div id="ex-wrap">' + examCard() + '</div>';
-  h += '<div class="card"><div class="sec-t">粘贴上报码汇总（备用方式）</div>'
+    + '</div>'
+    + '<div class="chips" style="margin-top:-4px;margin-bottom:10px"><span>今日活跃 <b>'+actN+'</b> 人</span><span>今日已做 <b>'+todayN+'</b> 题</span><span>今日 <b>'+todayG+'</b> 组</span></div>'
+    + cloudCard()
+    + '<div class="card"><div class="sec-t">粘贴上报码汇总（备用方式）</div>'
     + '<div class="muted" style="margin-bottom:9px;line-height:1.8">把队员发到群里的上报码<b>整段粘贴</b>进来即可（每行一条；聊天记录里的其他文字会自动忽略）。同一人重复上报时取最近一次的数据。</div>'
     + '<textarea class="adm" id="ad-ta" placeholder="CGKS1|张三|岳阳楼一大队|123456|386|210|48|512|430|12|2026-09-22"></textarea>'
     + '<div style="height:9px"></div>'
@@ -1923,22 +1945,28 @@ function renderAdminCore(){
     + '</div></div>';
 
   if(!n){
-    h += '<div class="card"><div class="muted" style="text-align:center;padding:14px 0;line-height:1.9">'
+    hSt += '<div class="card"><div class="muted" style="text-align:center;padding:14px 0;line-height:1.9">'
       + '还没有汇总数据。<br>'
       + '点上方「从云端刷新全员台账」拉取；队员登录并开始练习后即会自动入库。' + '</div></div>';
-    box.innerHTML = h + admFoot();
-    return;
+  }else{
+    hSt += admDeptBars(rows)
+      + '<div class="card"><div class="sec-t">全员学习台账（按部门分组）</div>' + admTable(rows)
+      + '<div style="height:10px"></div>'
+      + '<div class="row" style="gap:8px">'
+      +   '<button class="btn sm gold" style="flex:1" onclick="exportLedger()">导出 Excel 台账</button>'
+      +   '<button class="btn sm ghost" style="flex:1" onclick="copyLedgerText()">复制台账文本</button>'
+      + '</div></div>';
   }
+  hSt += '</div>';
 
-  h += admDeptBars(rows);
-  h += '<div class="card"><div class="sec-t">全员学习台账（按部门分组）</div>' + admTable(rows)
-    + '<div style="height:10px"></div>'
-    + '<div class="row" style="gap:8px">'
-    +   '<button class="btn sm gold" style="flex:1" onclick="exportLedger()">导出 Excel 台账</button>'
-    +   '<button class="btn sm ghost" style="flex:1" onclick="copyLedgerText()">复制台账文本</button>'
-    + '</div></div>';
-
-  box.innerHTML = h + admFoot();
+  box.innerHTML = tabs + hEx + hSt + admFoot();
+}
+/* 切换页签：只切显示，不重拉数据时也不会闪空白；顺手刷新当前页的最新数字 */
+function admTab(t){
+  ADM.tab = (t === 'study') ? 'study' : 'exam';
+  renderAdmin();
+  if(ADM.tab === 'exam'){ examPull(true); }
+  else if(ADM.on){ cloudPull(true); }
 }
 function admFoot(){
   return '<div class="card"><div class="sec-t">管理设置</div>'
@@ -1946,8 +1974,9 @@ function admFoot(){
     + '<button class="btn sm ghost" style="flex:1" onclick="adminLogoutTap()">退出登录（清除本机会话）</button>'
     + '<button class="btn sm ghost" style="flex:1" onclick="adminExit()">返回</button></div>'
     + '<div class="muted" style="margin-top:12px;line-height:1.85">'
+    + '· 上方两个页签<b>完全分开</b>：「日常学习」看练习台账（掌握分），「正式考试」看考场控制与考试总分，两套分数不混算。<br>'
     + '· 台账来自云端自动汇总，同一人重复上报会合并取最近一次；结果同时缓存在本机，断网时仍可查看。<br>'
-    + '· 考试榜单：队员交卷自动入榜，开考前点「清空榜单」，考中开启「自动刷新」实时看总分与用时。<br>'
+    + '· 正式成绩：队员交卷自动入榜，「归档并清空」只清正式成绩（清前自动归档留底），<b>不会动学习台账</b>；考中可开「自动刷新」实时看总分与用时。<br>'
     + '· 掌握分 ≥80 绿色（良好）、50~79 橙色（待提升）、&lt;50 红色（需督促）。<br>'
     + '· 台账含姓名、部门与证件尾号，仅限支队内部管理使用，请勿外传。'
     + '</div></div>';
@@ -2628,11 +2657,36 @@ function examCard(){
     h += '</tbody></table></div>';
     if(n>10) h += '<div class="muted" style="margin-top:8px">前 10 名已标黄，其余略 · 完整榜单可导出</div>';
   }
-  h += '<div style="height:9px"></div><div class="row" style="gap:8px">'
-    + '<button class="btn sm gold" style="flex:1" onclick="examPull()">刷新榜单</button>'
-    + '<button class="btn sm ghost" style="flex:1" id="ex-auto" onclick="examAutoToggle()">▶ 自动刷新</button>'
-    + '<button class="btn sm ghost" style="flex:0 0 92px" onclick="examClear()">归档并清空</button></div>';
+  h += '<div style="height:9px"></div>'
+    + '<div class="row" style="gap:8px;margin-bottom:8px">'
+    + '<button class="btn sm ghost" style="flex:1" onclick="examPull()">刷新榜单</button>'
+    + '<button class="btn sm ghost" style="flex:1" id="ex-auto" onclick="examAutoToggle()">▶ 自动刷新</button></div>'
+    + '<div class="row" style="gap:8px">'
+    + '<button class="btn sm gold" style="flex:1" onclick="exportExam()">导出成绩单</button>'
+    + '<button class="btn sm ghost" style="flex:0 0 104px" onclick="examClear()">归档并清空</button></div>';
   return h + '</div>';
+}
+/* 正式考试成绩单：只导正式榜，与学习台账彻底分开两个文件 */
+function exportExam(){
+  var list = examSorted();
+  if(!list.length){ toast('还没有正式考试成绩'); return; }
+  var head = ['名次','姓名','部门','证件尾号','总分','满分','用时(秒)','交卷时间','开考时间','截止时间','是否超时'];
+  var lines = [head.join(',')];
+  list.forEach(function(x, i){
+    lines.push([i+1, x.uname, x.dept, x.id6, x.score, x.max||100, x.used||0,
+      String(x.ts||'').replace('T',' ').slice(0,19),
+      String(x.startedAt||'').replace('T',' ').slice(0,19),
+      String(x.deadline||'').replace('T',' ').slice(0,19),
+      x.late ? '是' : '否'].join(','));
+  });
+  var csv = '\uFEFF' + lines.join('\r\n');
+  var blob = new Blob([csv], { type:'text/csv;charset=utf-8' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '正式考试成绩单_' + dayKey() + '.csv';
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 3000);
+  toast('成绩单已导出（' + list.length + ' 人）');
 }
 function renderExam(){
   var w = $('ex-wrap');
