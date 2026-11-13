@@ -629,7 +629,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.11.13-1441';
+var APP_VER = '2026.11.13-1514';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -1750,9 +1750,16 @@ function admHeaders(){
   var tok = lsGet('cgks_adm_tok', null);
   return tok ? { 'x-adm-token': tok } : {};
 }
+/* 退出/过期时把两张榜的自动刷新一并停掉：否则 8 秒一次的轮询会一直撞 401，
+   不断弹「登录已过期」，看着像系统坏了 */
+function stopAutoRefresh(){
+  if(typeof ADM_EX !== 'undefined' && ADM_EX.auto){ clearInterval(ADM_EX.auto); ADM_EX.auto = null; }
+  if(typeof ADM_MOCK !== 'undefined' && ADM_MOCK.auto){ clearInterval(ADM_MOCK.auto); ADM_MOCK.auto = null; }
+}
 function admLogout(){
   localStorage.removeItem('cgks_adm_tok');
   ADM.on = false;
+  stopAutoRefresh();
 }
 
 /* ---------- 队员端：生成上报码 ---------- */
@@ -1846,7 +1853,7 @@ function adminEnter(){
         ADM.on = true;
         renderAdmin();
         toast('已进入管理后台');
-        cloudPull(true); examPull(true);
+        cloudPull(true); examPull(true); mockPull(true);
       }else{
         if(e){ e.textContent = (x.s===403 || x.s===429) ? (x.j && x.j.error ? x.j.error : '管理口令不正确') : '登录失败，请稍后重试'; }
       }
@@ -1858,12 +1865,13 @@ function admResume(){
   if(!lsGet('cgks_adm_tok', null)) return false;
   ADM.on = true;
   renderAdmin();
-  cloudPull(true); examPull(true);
+  cloudPull(true); examPull(true); mockPull(true);
   return true;
 }
 function adminExit(){
   ADM.on = false;
   ADM.exited = true;   /* 主动退出后不再自动恢复会话（重新点「管理员入口」才恢复） */
+  stopAutoRefresh();
   renderAdmin();
   go(S.user ? 'home' : 'login');
 }
@@ -1935,6 +1943,7 @@ function renderAdminCore(){
     + '</div>'
     + '<div class="chips" style="margin-top:-4px;margin-bottom:10px"><span>今日活跃 <b>'+actN+'</b> 人</span><span>今日已做 <b>'+todayN+'</b> 题</span><span>今日 <b>'+todayG+'</b> 组</span></div>'
     + cloudCard()
+    + '<div id="mk-wrap">' + mockCard() + '</div>'
     + '<div class="card"><div class="sec-t">粘贴上报码汇总（备用方式）</div>'
     + '<div class="muted" style="margin-bottom:9px;line-height:1.8">把队员发到群里的上报码<b>整段粘贴</b>进来即可（每行一条；聊天记录里的其他文字会自动忽略）。同一人重复上报时取最近一次的数据。</div>'
     + '<textarea class="adm" id="ad-ta" placeholder="CGKS1|张三|岳阳楼一大队|123456|386|210|48|512|430|12|2026-09-22"></textarea>'
@@ -1966,7 +1975,7 @@ function admTab(t){
   ADM.tab = (t === 'study') ? 'study' : 'exam';
   renderAdmin();
   if(ADM.tab === 'exam'){ examPull(true); }
-  else if(ADM.on){ cloudPull(true); }
+  else if(ADM.on){ cloudPull(true); mockPull(true); }
 }
 function admFoot(){
   return '<div class="card"><div class="sec-t">管理设置</div>'
@@ -1974,9 +1983,9 @@ function admFoot(){
     + '<button class="btn sm ghost" style="flex:1" onclick="adminLogoutTap()">退出登录（清除本机会话）</button>'
     + '<button class="btn sm ghost" style="flex:1" onclick="adminExit()">返回</button></div>'
     + '<div class="muted" style="margin-top:12px;line-height:1.85">'
-    + '· 上方两个页签<b>完全分开</b>：「日常学习」看练习台账（掌握分），「正式考试」看考场控制与考试总分，两套分数不混算。<br>'
+    + '· 上方两个页签<b>完全分开</b>：「日常学习」看练习台账（掌握分）+ 平时模拟测试成绩榜，「正式考试」看考场控制与正式考试成绩，三套数据互不混算。<br>'
     + '· 台账来自云端自动汇总，同一人重复上报会合并取最近一次；结果同时缓存在本机，断网时仍可查看。<br>'
-    + '· 正式成绩：队员交卷自动入榜，「归档并清空」只清正式成绩（清前自动归档留底），<b>不会动学习台账</b>；考中可开「自动刷新」实时看总分与用时。<br>'
+    + '· 正式成绩：队员在正式考场交卷才入榜，「归档并清空」只清正式成绩（清前自动归档留底），<b>不会动学习台账和模拟测试榜</b>；考中可开「自动刷新」实时看总分与用时。<br>'
     + '· 掌握分 ≥80 绿色（良好）、50~79 橙色（待提升）、&lt;50 红色（需督促）。<br>'
     + '· 台账含姓名、部门与证件尾号，仅限支队内部管理使用，请勿外传。'
     + '</div></div>';
@@ -2190,8 +2199,11 @@ function cloudPull(silent){
     });
 }
 
-/* ---------------- 考试实时榜单 ---------------- */
-var ADM_EX = { rows:[], auto:null };
+/* ---------------- 两套榜单：正式考试 / 平时模拟测试 ----------------
+   正式考试榜只放“进考场交卷”的成绩；平时「模拟练习」的成绩属于学习模块，两边互不串。
+   现在还没开考，正式榜就应该是 0 人；学习那边的模拟测试榜保留历史数据不动。 */
+var ADM_EX = { rows:[], auto:null };     /* 正式考试 */
+var ADM_MOCK = { rows:[], auto:null };   /* 平时模拟测试 */
 function fmtUsed(s){ return Math.floor(s/60)+'′'+pad(s%60)+'″'; }
 /* 成绩离线队列：先落盘后发送，确保考试成绩不因扩展拦截/网络抖动丢失 */
 function examQueueGet(){ var q = lsGet('cgks_ex_q', []); return Array.isArray(q) ? q : []; }
@@ -2500,19 +2512,39 @@ function scheduleExamRetry(){
   if(EXQ_TIMER) return;
   EXQ_TIMER = setTimeout(function(){ EXQ_TIMER = null; flushExamQueue(); }, 30000);
 }
-function examPull(silent){
-  if(!API_BASE) return;
-  fetch(apiUrl('/api/exam/all'), { headers: admHeaders() })
+/* 拉一套榜单：kind=formal（正式）/ mock（平时模拟测试）。
+   后端若还是旧版（不认识 kind，直接回数组）：那批数据在 2026-11-13 之前全是模拟测试成绩，
+   只能算到 mock 侧；正式榜遇到数组一律当 0 人，绝不让平时分数冒充正式成绩。 */
+function examFetchRows(kind){
+  return fetch(apiUrl('/api/exam/all?kind=' + kind), { headers: admHeaders() })
     .then(function(r){
       if(r.status === 401){ if(ADM.on){ admLogout(); renderAdmin(); toast('登录已过期，请重新输入管理口令'); } return null; }
       if(!r.ok) return null;
       return r.json();
-    }).then(function(list){
-      if(!list) return;
-      ADM_EX.rows = list;
-      renderExam();
-      if(!silent) toast('榜单已刷新：' + list.length + ' 人');
-    }).catch(function(){ if(!silent) toast('榜单拉取失败，请检查网络'); });
+    })
+    .then(function(j){
+      if(j === null || j === undefined) return null;
+      if(Array.isArray(j)) return (kind === 'mock') ? j : [];
+      return Array.isArray(j.rows) ? j.rows : [];
+    });
+}
+function examPull(silent){
+  if(!API_BASE) return;
+  examFetchRows('formal').then(function(list){
+    if(list === null) return;
+    ADM_EX.rows = list;
+    renderExam();
+    if(!silent) toast('正式考试榜已刷新：' + list.length + ' 人');
+  }).catch(function(){ if(!silent) toast('榜单拉取失败，请检查网络'); });
+}
+function mockPull(silent){
+  if(!API_BASE) return;
+  examFetchRows('mock').then(function(list){
+    if(list === null) return;
+    ADM_MOCK.rows = list;
+    renderMock();
+    if(!silent) toast('模拟测试榜已刷新：' + list.length + ' 人');
+  }).catch(function(){ if(!silent) toast('榜单拉取失败，请检查网络'); });
 }
 function examAutoToggle(){
   var btn = $('ex-auto');
@@ -2537,6 +2569,85 @@ function examSorted(){
     if(b.score !== a.score) return b.score - a.score;
     return (a.used||0) - (b.used||0);
   });
+}
+/* ---------- 平时模拟测试榜（学习模块，与正式考试榜各算各的） ---------- */
+/* 两张榜共用一套表格渲染，避免“改一处、漏一处”导致两边的排名/标黄规则不一样 */
+function rankTable(list){
+  var h = '<div class="lt-wrap"><table class="lt"><thead><tr><th>名次</th><th>姓名</th><th>部门</th><th>总分</th><th>用时</th><th>交卷时间</th></tr></thead><tbody>';
+  list.forEach(function(x, i){
+    var medal = i===0?'🥇':(i===1?'🥈':(i===2?'🥉':(i+1)));
+    var top = i<10 ? ' class="top10"' : '';
+    var dt = (x.ts||'').replace('T',' ').slice(5,16);
+    h += '<tr'+top+'><td><b>'+medal+'</b></td><td>'+esc(x.uname)+'</td><td>'+esc(x.dept)+'</td>'
+      + '<td><b>'+fmtScore(x.score)+'</b>/'+(x.max||100)+'</td><td>'+fmtUsed(x.used||0)+'</td><td class="muted">'+esc(dt)+'</td></tr>';
+  });
+  h += '</tbody></table></div>';
+  if(list.length>10) h += '<div class="muted" style="margin-top:8px">前 10 名已标黄，其余略 · 完整榜单可导出</div>';
+  return h;
+}
+function mockSorted(){
+  return ADM_MOCK.rows.slice().sort(function(a, b){
+    if(b.score !== a.score) return b.score - a.score;
+    return (a.used||0) - (b.used||0);
+  });
+}
+function mockAutoToggle(){
+  var btn = $('mk-auto');
+  if(ADM_MOCK.auto){
+    clearInterval(ADM_MOCK.auto); ADM_MOCK.auto = null;
+    if(btn) btn.textContent = '▶ 自动刷新';
+  }else{
+    ADM_MOCK.auto = setInterval(function(){ mockPull(true); }, 8000);
+    if(btn) btn.textContent = '⏸ 停止自动';
+    toast('已开启自动刷新（每 8 秒）');
+  }
+}
+function mockCard(){
+  var list = mockSorted(), n = list.length;
+  var avg = n ? Math.round(list.reduce(function(s,x){ return s+x.score; }, 0) / n * 10) / 10 : 0;
+  var h = '<div class="card"><div class="sec-t">模拟测试成绩榜（总分降序 · 同分按用时短优先）'
+    + '<span class="muted" style="font-weight:400;font-size:11.5px"> 已测试 '+n+' 人 · 平均 '+avg+' 分</span></div>'
+    + '<div class="muted" style="font-size:11.5px;line-height:1.75;margin:-2px 0 9px">'
+    +   '来自首页「模拟练习」的交卷成绩，<b>只作日常练手参考</b>，不计入正式考试；正式考试成绩在「正式考试」页签。'
+    + '</div>';
+  if(!n){
+    h += '<div class="muted" style="text-align:center;padding:12px 0;line-height:1.9">还没有模拟测试成绩。<br>历史「模拟练习」的交卷成绩会出现在这里。</div>';
+  }else{
+    h += rankTable(list)
+      + '<div class="muted" style="margin-top:8px;line-height:1.75;font-size:11.5px">'
+      +   '注：现版「模拟练习」只在本机出分、不再上报，这张表是截至 2026-11-13 的历史成绩，不会自动新增。'
+      + '</div>';
+  }
+  h += '<div style="height:9px"></div>'
+    + '<div class="row" style="gap:8px">'
+    + '<button class="btn sm ghost" style="flex:1" onclick="mockPull()">刷新榜单</button>'
+    + '<button class="btn sm ghost" style="flex:1" id="mk-auto" onclick="mockAutoToggle()">' + (ADM_MOCK.auto ? '⏸ 停止自动' : '▶ 自动刷新') + '</button></div>'
+    + '<div style="height:8px"></div>'
+    + '<button class="btn sm gold" onclick="exportMock()">导出成绩单</button>';
+  return h + '</div>';
+}
+function renderMock(){
+  var w = $('mk-wrap');
+  if(w) w.innerHTML = mockCard();
+}
+/* 模拟测试成绩单：与正式考试成绩单分成两个文件，台账/考试三套数据不混 */
+function exportMock(){
+  var list = mockSorted();
+  if(!list.length){ toast('还没有模拟测试成绩'); return; }
+  var head = ['名次','姓名','部门','证件尾号','总分','满分','用时(秒)','交卷时间'];
+  var lines = [head.join(',')];
+  list.forEach(function(x, i){
+    lines.push([i+1, x.uname, x.dept, x.id6, x.score, x.max||100, x.used||0,
+      String(x.ts||'').replace('T',' ').slice(0,19)].join(','));
+  });
+  var csv = '\uFEFF' + lines.join('\r\n');
+  var blob = new Blob([csv], { type:'text/csv;charset=utf-8' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '模拟测试成绩单_' + dayKey() + '.csv';
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 3000);
+  toast('成绩单已导出（' + list.length + ' 人）');
 }
 function fxClockVal(iso){
   if(!iso) return '';
@@ -2640,27 +2751,20 @@ function gatePull(force){
 
 function examCard(){
   var n = ADM_EX.rows.length;
-  var done10 = examSorted().slice(0, 10);
   var avg = n ? Math.round(examSorted().reduce(function(s,x){return s+x.score;},0)/n*10)/10 : 0;
-  var h = '<div class="card"><div class="sec-t">正式考试成绩榜（总分降序 · 同分按用时短优先）<span class="muted" style="font-weight:400;font-size:11.5px"> 已交卷 '+n+' 人 · 平均 '+avg+' 分</span></div>';
+  var h = '<div class="card"><div class="sec-t">正式考试成绩榜（本场 · 总分降序 · 同分按用时短优先）<span class="muted" style="font-weight:400;font-size:11.5px"> 已交卷 '+n+' 人 · 平均 '+avg+' 分</span></div>'
+    + '<div class="muted" style="font-size:11.5px;line-height:1.75;margin:-2px 0 9px">'
+    +   '只统计本场正式考试交卷的成绩，与「日常学习」里的模拟测试榜<b>完全分开</b>；还没开考就是 0 人。'
+    + '</div>';
   if(!n){
-    h += '<div class="muted" style="text-align:center;padding:12px 0;line-height:1.9">暂无人交卷。<br>开场前请先在上方建立场次并归档旧成绩；队员在开考后交卷即自动入榜。</div>';
+    h += '<div class="muted" style="text-align:center;padding:12px 0;line-height:1.9">本场还没有人交卷。<br>开考后队员交卷即自动入榜（未开考时为空属正常）。</div>';
   }else{
-    h += '<div class="lt-wrap"><table class="lt"><thead><tr><th>名次</th><th>姓名</th><th>部门</th><th>总分</th><th>用时</th><th>交卷时间</th></tr></thead><tbody>';
-    examSorted().forEach(function(x, i){
-      var medal = i===0?'🥇':(i===1?'🥈':(i===2?'🥉':(i+1)));
-      var top = i<10 ? ' class="top10"' : '';
-      var dt = (x.ts||'').replace('T',' ').slice(5,16);
-      h += '<tr'+top+'><td><b>'+medal+'</b></td><td>'+esc(x.uname)+'</td><td>'+esc(x.dept)+'</td>'
-        + '<td><b>'+fmtScore(x.score)+'</b>/'+(x.max||100)+'</td><td>'+fmtUsed(x.used||0)+'</td><td class="muted">'+esc(dt)+'</td></tr>';
-    });
-    h += '</tbody></table></div>';
-    if(n>10) h += '<div class="muted" style="margin-top:8px">前 10 名已标黄，其余略 · 完整榜单可导出</div>';
+    h += rankTable(examSorted());
   }
   h += '<div style="height:9px"></div>'
     + '<div class="row" style="gap:8px;margin-bottom:8px">'
     + '<button class="btn sm ghost" style="flex:1" onclick="examPull()">刷新榜单</button>'
-    + '<button class="btn sm ghost" style="flex:1" id="ex-auto" onclick="examAutoToggle()">▶ 自动刷新</button></div>'
+    + '<button class="btn sm ghost" style="flex:1" id="ex-auto" onclick="examAutoToggle()">' + (ADM_EX.auto ? '⏸ 停止自动' : '▶ 自动刷新') + '</button></div>'
     + '<div class="row" style="gap:8px">'
     + '<button class="btn sm gold" style="flex:1" onclick="exportExam()">导出成绩单</button>'
     + '<button class="btn sm ghost" style="flex:0 0 104px" onclick="examClear()">归档并清空</button></div>';
@@ -2694,14 +2798,21 @@ function renderExam(){
 }
 
 /* ---------------- 启动 ---------------- */
-/* 版本自检：页面版本与服务端不一致 → 顶部提示刷新（兼容旧缓存页面调新接口） */
+/* 版本自检：页面版本落后于服务端 → 顶部提示刷新（兼容旧缓存页面调新接口）。
+   只在「服务端更新」时提示：镜像站（GitHub）会比主站后端先上线，页面比后端新时提示刷新毫无意义，
+   反而让人以为出了问题，那条红条一直挂着。 */
+function verNum(v){
+  var m = String(v||'').match(/(\d{4})\.(\d{1,2})\.(\d{1,2})-(\d{3,4})/);
+  return m ? (+m[1]*100000000 + +m[2]*1000000 + +m[3]*10000 + +m[4]) : 0;
+}
 function verCheck(){
   if(location.protocol === 'file:') return;
   try{
     fetch(apiUrl('/api/ver'))
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(j){
-        if(j && j.ver && typeof APP_VER!=='undefined' && APP_VER !== 'dev' && j.ver !== APP_VER){
+        if(j && j.ver && typeof APP_VER!=='undefined' && APP_VER !== 'dev'
+           && j.ver !== APP_VER && verNum(j.ver) > verNum(APP_VER)){
           $('ver-bar').classList.add('on');
         }
       })
