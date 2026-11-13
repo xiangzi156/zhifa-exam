@@ -629,7 +629,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.11.13-1524';
+var APP_VER = '2026.11.13-1558';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -1743,7 +1743,7 @@ function logout(){
    因此采用「学习上报码」机制：队员端生成一行摘要码 → 发到工作群
    → 管理员在管理后台整段粘贴 → 自动解析、去重、按部门汇总成台账。
    ============================================================ */
-var ADM = { on:false, rows:[], tab:'exam' };
+var ADM = { on:false, rows:[], tab:'study' };   /* 默认进日常学习（与原来一致），点页签再看正式考试 */
 /* 管理口令只保存在后端（ADMIN_PASS 环境变量），网页上不出现任何密码/默认口令；
  * 登录成功后后端签发临时 token（12 小时有效），前端仅保存 token。 */
 function admHeaders(){
@@ -1931,7 +1931,7 @@ function renderAdminCore(){
 
   var hEx = '<div id="adm-pane-exam"' + (TK==='exam' ? '' : ' style="display:none"') + '>'
     + '<div id="fx-wrap">' + gateCard() + '</div>'
-    + '<div id="ex-wrap">' + examCard() + '</div>'
+    + '<div id="fx-board">' + examCard() + '</div>'
     + '</div>';
 
   var hSt = '<div id="adm-pane-study"' + (TK==='study' ? '' : ' style="display:none"') + '>'
@@ -1943,7 +1943,7 @@ function renderAdminCore(){
     + '</div>'
     + '<div class="chips" style="margin-top:-4px;margin-bottom:10px"><span>今日活跃 <b>'+actN+'</b> 人</span><span>今日已做 <b>'+todayN+'</b> 题</span><span>今日 <b>'+todayG+'</b> 组</span></div>'
     + cloudCard()
-    + '<div id="mk-wrap">' + mockCard() + '</div>'
+    + '<div id="ex-wrap">' + mockCard() + '</div>'
     + '<div class="card"><div class="sec-t">粘贴上报码汇总（备用方式）</div>'
     + '<div class="muted" style="margin-bottom:9px;line-height:1.8">把队员发到群里的上报码<b>整段粘贴</b>进来即可（每行一条；聊天记录里的其他文字会自动忽略）。同一人重复上报时取最近一次的数据。</div>'
     + '<textarea class="adm" id="ad-ta" placeholder="CGKS1|张三|岳阳楼一大队|123456|386|210|48|512|430|12|2026-09-22"></textarea>'
@@ -1983,9 +1983,8 @@ function admFoot(){
     + '<button class="btn sm ghost" style="flex:1" onclick="adminLogoutTap()">退出登录（清除本机会话）</button>'
     + '<button class="btn sm ghost" style="flex:1" onclick="adminExit()">返回</button></div>'
     + '<div class="muted" style="margin-top:12px;line-height:1.85">'
-    + '· 上方两个页签<b>完全分开</b>：「日常学习」看练习台账（掌握分）+ 平时模拟测试成绩榜，「正式考试」看考场控制与正式考试成绩，三套数据互不混算。<br>'
     + '· 台账来自云端自动汇总，同一人重复上报会合并取最近一次；结果同时缓存在本机，断网时仍可查看。<br>'
-    + '· 正式成绩：队员在正式考场交卷才入榜，「归档并清空」只清正式成绩（清前自动归档留底），<b>不会动学习台账和模拟测试榜</b>；考中可开「自动刷新」实时看总分与用时。<br>'
+    + '· 考试榜单：队员交卷自动入榜，开考前点「清空榜单」，考中开启「自动刷新」实时看总分与用时。<br>'
     + '· 掌握分 ≥80 绿色（良好）、50~79 橙色（待提升）、&lt;50 红色（需督促）。<br>'
     + '· 台账含姓名、部门与证件尾号，仅限支队内部管理使用，请勿外传。'
     + '</div></div>';
@@ -2543,11 +2542,11 @@ function mockPull(silent){
     if(list === null) return;
     ADM_MOCK.rows = list;
     renderMock();
-    if(!silent) toast('模拟测试榜已刷新：' + list.length + ' 人');
+    if(!silent) toast('榜单已刷新：' + list.length + ' 人');
   }).catch(function(){ if(!silent) toast('榜单拉取失败，请检查网络'); });
 }
 function examAutoToggle(){
-  var btn = $('ex-auto');
+  var btn = $('fx-auto');
   if(ADM_EX.auto){
     clearInterval(ADM_EX.auto); ADM_EX.auto = null;
     if(btn) btn.textContent = '▶ 自动刷新';
@@ -2592,7 +2591,7 @@ function mockSorted(){
   });
 }
 function mockAutoToggle(){
-  var btn = $('mk-auto');
+  var btn = $('ex-auto');
   if(ADM_MOCK.auto){
     clearInterval(ADM_MOCK.auto); ADM_MOCK.auto = null;
     if(btn) btn.textContent = '▶ 自动刷新';
@@ -2604,50 +2603,30 @@ function mockAutoToggle(){
 }
 function mockCard(){
   var list = mockSorted(), n = list.length;
-  var avg = n ? Math.round(list.reduce(function(s,x){ return s+x.score; }, 0) / n * 10) / 10 : 0;
-  var h = '<div class="card"><div class="sec-t">模拟测试成绩榜（总分降序 · 同分按用时短优先）'
-    + '<span class="muted" style="font-weight:400;font-size:11.5px"> 已测试 '+n+' 人 · 平均 '+avg+' 分</span></div>'
-    + '<div class="muted" style="font-size:11.5px;line-height:1.75;margin:-2px 0 9px">'
-    +   '平时的模拟测试成绩，<b>只作日常练手参考</b>，不计入正式考试；正式考试成绩在「正式考试」页签。'
-    + '</div>';
+  var avg = n ? Math.round(list.reduce(function(s,x){return s+x.score;},0)/n*10)/10 : 0;
+  var h = '<div class="card"><div class="sec-t">考试实时榜单（总分降序 · 同分按用时短优先）<span class="muted" style="font-weight:400;font-size:11.5px"> 已交卷 '+n+' 人 · 平均 '+avg+' 分</span></div>';
   if(!n){
-    h += '<div class="muted" style="text-align:center;padding:12px 0;line-height:1.9">还没有模拟测试成绩。<br>历史「模拟练习」的交卷成绩会出现在这里。</div>';
+    h += '<div class="muted" style="text-align:center;padding:12px 0;line-height:1.9">暂无人交卷。<br>队员完成「测试」交卷后即自动进入榜单；开考前可点「清空榜单」。</div>';
   }else{
-    h += rankTable(list)
-      + '<div class="muted" style="margin-top:8px;line-height:1.75;font-size:11.5px">'
-      +   '注：现版「模拟练习」只在本机出分、不再上报，这张表是截至 2026-11-13 的历史成绩，不会自动新增。'
-      + '</div>';
+    h += rankTable(list);
   }
-  h += '<div style="height:9px"></div>'
-    + '<div class="row" style="gap:8px">'
-    + '<button class="btn sm ghost" style="flex:1" onclick="mockPull()">刷新榜单</button>'
-    + '<button class="btn sm ghost" style="flex:1" id="mk-auto" onclick="mockAutoToggle()">' + (ADM_MOCK.auto ? '⏸ 停止自动' : '▶ 自动刷新') + '</button></div>'
-    + '<div style="height:8px"></div>'
-    + '<button class="btn sm gold" onclick="exportMock()">导出成绩单</button>';
+  h += '<div style="height:9px"></div><div class="row" style="gap:8px">'
+    + '<button class="btn sm gold" style="flex:1" onclick="mockPull()">刷新榜单</button>'
+    + '<button class="btn sm ghost" style="flex:1" id="ex-auto" onclick="mockAutoToggle()">▶ 自动刷新</button>'
+    + '<button class="btn sm ghost" style="flex:0 0 92px" onclick="mockClear()">清空榜单</button></div>';
   return h + '</div>';
 }
 function renderMock(){
-  var w = $('mk-wrap');
+  var w = $('ex-wrap');
   if(w) w.innerHTML = mockCard();
 }
-/* 模拟测试成绩单：与正式考试成绩单分成两个文件，台账/考试三套数据不混 */
-function exportMock(){
-  var list = mockSorted();
-  if(!list.length){ toast('还没有模拟测试成绩'); return; }
-  var head = ['名次','姓名','部门','证件尾号','总分','满分','用时(秒)','交卷时间'];
-  var lines = [head.join(',')];
-  list.forEach(function(x, i){
-    lines.push([i+1, x.uname, x.dept, x.id6, x.score, x.max||100, x.used||0,
-      String(x.ts||'').replace('T',' ').slice(0,19)].join(','));
-  });
-  var csv = '\uFEFF' + lines.join('\r\n');
-  var blob = new Blob([csv], { type:'text/csv;charset=utf-8' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = '模拟测试成绩单_' + dayKey() + '.csv';
-  a.click();
-  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 3000);
-  toast('成绩单已导出（' + list.length + ' 人）');
+/* 「清空榜单」清的是日常学习这张榜（与正式成绩互不影响），清前同样自动归档留底 */
+function mockClear(){
+  if(!confirm('确定清空考试榜单吗？建议在统一开考前执行。')) return;
+  fetch(apiUrl('/api/exam/reset?kind=mock'), { method:'POST', headers: admHeaders() })
+    .then(function(r){ if(r.status===401){ admLogout(); renderAdmin(); toast('登录已过期'); return null; } return r.json(); })
+    .then(function(j){ if(j && j.ok){ ADM_MOCK.rows = []; renderMock(); toast('榜单已清空'); } })
+    .catch(function(){ toast('操作失败，请检查网络'); });
 }
 function fxClockVal(iso){
   if(!iso) return '';
@@ -2764,7 +2743,7 @@ function examCard(){
   h += '<div style="height:9px"></div>'
     + '<div class="row" style="gap:8px;margin-bottom:8px">'
     + '<button class="btn sm ghost" style="flex:1" onclick="examPull()">刷新榜单</button>'
-    + '<button class="btn sm ghost" style="flex:1" id="ex-auto" onclick="examAutoToggle()">' + (ADM_EX.auto ? '⏸ 停止自动' : '▶ 自动刷新') + '</button></div>'
+    + '<button class="btn sm ghost" style="flex:1" id="fx-auto" onclick="examAutoToggle()">' + (ADM_EX.auto ? '⏸ 停止自动' : '▶ 自动刷新') + '</button></div>'
     + '<div class="row" style="gap:8px">'
     + '<button class="btn sm gold" style="flex:1" onclick="exportExam()">导出成绩单</button>'
     + '<button class="btn sm ghost" style="flex:0 0 104px" onclick="examClear()">归档并清空</button></div>';
@@ -2793,26 +2772,19 @@ function exportExam(){
   toast('成绩单已导出（' + list.length + ' 人）');
 }
 function renderExam(){
-  var w = $('ex-wrap');
+  var w = $('fx-board');
   if(w) w.innerHTML = examCard();
 }
 
 /* ---------------- 启动 ---------------- */
-/* 版本自检：页面版本落后于服务端 → 顶部提示刷新（兼容旧缓存页面调新接口）。
-   只在「服务端更新」时提示：镜像站（GitHub）会比主站后端先上线，页面比后端新时提示刷新毫无意义，
-   反而让人以为出了问题，那条红条一直挂着。 */
-function verNum(v){
-  var m = String(v||'').match(/(\d{4})\.(\d{1,2})\.(\d{1,2})-(\d{3,4})/);
-  return m ? (+m[1]*100000000 + +m[2]*1000000 + +m[3]*10000 + +m[4]) : 0;
-}
+/* 版本自检：页面版本与服务端不一致 → 顶部提示刷新（兼容旧缓存页面调新接口） */
 function verCheck(){
   if(location.protocol === 'file:') return;
   try{
     fetch(apiUrl('/api/ver'))
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(j){
-        if(j && j.ver && typeof APP_VER!=='undefined' && APP_VER !== 'dev'
-           && j.ver !== APP_VER && verNum(j.ver) > verNum(APP_VER)){
+        if(j && j.ver && typeof APP_VER!=='undefined' && APP_VER !== 'dev' && j.ver !== APP_VER){
           $('ver-bar').classList.add('on');
         }
       })
