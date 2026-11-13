@@ -629,7 +629,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.11.13-1514';
+var APP_VER = '2026.11.13-1524';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -2608,7 +2608,7 @@ function mockCard(){
   var h = '<div class="card"><div class="sec-t">模拟测试成绩榜（总分降序 · 同分按用时短优先）'
     + '<span class="muted" style="font-weight:400;font-size:11.5px"> 已测试 '+n+' 人 · 平均 '+avg+' 分</span></div>'
     + '<div class="muted" style="font-size:11.5px;line-height:1.75;margin:-2px 0 9px">'
-    +   '来自首页「模拟练习」的交卷成绩，<b>只作日常练手参考</b>，不计入正式考试；正式考试成绩在「正式考试」页签。'
+    +   '平时的模拟测试成绩，<b>只作日常练手参考</b>，不计入正式考试；正式考试成绩在「正式考试」页签。'
     + '</div>';
   if(!n){
     h += '<div class="muted" style="text-align:center;padding:12px 0;line-height:1.9">还没有模拟测试成绩。<br>历史「模拟练习」的交卷成绩会出现在这里。</div>';
