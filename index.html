@@ -623,7 +623,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.11.13-1208';
+var APP_VER = '2026.11.13-1252';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -2238,10 +2238,30 @@ function fxGate(cb){
 function formalDoneKey(sid){ return 'cgks_fx_' + sid + '_' + (S.user ? S.user.id : 'anon'); }
 function demoKey(sid){ return 'cgks_demo_' + sid + '_' + (S.user ? S.user.id : 'anon'); }
 
+/* 全选型多选（答案是 ABCD 全选）：题库里占比四成，纯随机抽 10 道平均会碰上 4 道，
+   等于白送 8 分。一张卷限死最多 3 道，其余从非全选题里抽。 */
+var FX_ALLPICK_CAP = 3;
+function isAllPick(q){
+  if(!q || q.type !== 'multi') return false;
+  var opts = q.opts || [];
+  if(opts.length < 2) return false;
+  var a = typeof q.ans === 'string' ? q.ans.split('') : (q.ans || []);
+  if(a.length !== opts.length) return false;
+  for(var i = 0; i < opts.length; i++){ if(a.indexOf(opts[i].k) < 0) return false; }
+  return true;
+}
 /* 正式卷与模拟卷同规格：全题库按题型随机抽，不受本人做题记录影响 */
 function fxPaperQs(){
   function pick(t, n){ return shuffle(BANK.filter(function(q){ return q.type === t; })).slice(0, n); }
-  return shuffle(pick('judge',20).concat(pick('single',20), pick('multi',10), pick('img',10)));
+  var mAll = shuffle(BANK.filter(function(q){ return q.type === 'multi' && isAllPick(q); }));
+  var mNorm = shuffle(BANK.filter(function(q){ return q.type === 'multi' && !isAllPick(q); }));
+  var cap = Math.min(FX_ALLPICK_CAP, mAll.length);
+  /* 2 道还是 3 道随机，避免每张卷固定 3 道被人摸出规律 */
+  if(cap > 2) cap = 2 + (Math.random() < 0.5 ? 1 : 0);
+  var multi = mAll.slice(0, cap).concat(mNorm.slice(0, Math.max(0, 10 - cap)));
+  /* 题库调整导致非全选题不足 10 道时，才允许超出上限补齐，保证张数不变 */
+  if(multi.length < 10) multi = multi.concat(mAll.slice(cap, cap + (10 - multi.length)));
+  return shuffle(pick('judge',20).concat(pick('single',20), multi, pick('img',10)));
 }
 
 function refreshExamHome(){
@@ -2340,6 +2360,8 @@ function enterExam(){
     if(j && j.ok){ goPaper(Date.parse(j.deadline), j.id || st.id); return; }
     if(j && j.error === 'not-open'){ alert('正式考试尚未开始或已截止入场，请稍后刷新首页再试。'); return; }
     if(j && j.error === 'ended'){ alert('本场考试已收卷，不能再进入。'); return; }
+    if(j && j.error === 'done'){ alert('你已交卷，本场不能再考。'); return; }
+    if(j && j.error === 'wrong-session'){ alert('页面版本过旧，请刷新页面后重试。'); return; }
     alert('网络异常，未能进入考场。请检查网络后重试；多次失败请联系监考人员。');
   }).catch(function(){
     alert('网络异常，未能进入考场。请检查网络后重试；多次失败请联系监考人员。');
@@ -2422,11 +2444,27 @@ function flushExamQueue(){
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(q[0])
   }).then(function(r){
+    if(!r.ok){ return null; }            /* 网关/服务异常：留在队列，稍后重交 */
+    /* 回了 200 但不是 JSON（平台门禁页/中转页）：绝不能当成功出队，否则这份成绩就丢了 */
+    return r.json().catch(function(){ return null; });
+  }).then(function(j){
     EXQ_SENDING = false;
-    if(r.ok){
+    if(j === null){ scheduleExamRetry(); return; }
+    /* 服务端明确拒收：闸门未开只是暂时的，继续排队；收卷/超时/场次不符再重试也没用，
+       清掉并告知本人，免得“看着交上了、榜上却没有” */
+    if(j && j.ok === false && j.error !== 'exam-not-open'){
       q = examQueueGet(); q.shift(); examQueueSave(q);
+      var msg = j.error === 'ended' ? '本场已收卷'
+        : j.error === 'too-late' ? '已超过交卷时限'
+        : j.error === 'wrong-session' ? '页面版本过旧，请刷新后重试'
+        : '服务器未接收';
+      toast('交卷未成功：' + msg);
       if(q.length) flushExamQueue();
-    }else{ scheduleExamRetry(); }
+      return;
+    }
+    if(j && j.ok === false){ scheduleExamRetry(); return; }
+    q = examQueueGet(); q.shift(); examQueueSave(q);
+    if(q.length) flushExamQueue();
   }).catch(function(){ EXQ_SENDING = false; scheduleExamRetry(); });
 }
 function scheduleExamRetry(){
