@@ -629,7 +629,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.11.15-2221';
+var APP_VER = '2026.11.15-2245';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -794,6 +794,7 @@ function doLogin(){
   toast(known? ('欢迎回来，'+name) : ('登录成功，'+name));
   refreshHome();
   cloudPush(true);          /* 登录即上报一次，管理端马上能看到人 */
+  recPull();                /* 顺手把服务端那份答题明细取回来（换过手机的能找回记录） */
 }
 
 /* ---------------- 遗忘曲线 / 记录 ---------------- */
@@ -2108,8 +2109,61 @@ function cloudRow(){
            days:s.days, last_date:s.last,
            score: total ? Math.round(s.master / total * 100) : 0,
            daily: S.daily,
+           recp: packRec(),
            today: { d:dk, n:td.n||0, r:td.r||0, g:td.g||0, l:td.l||0 },
            updated_at:new Date().toISOString() };
+}
+/* ---------- 答题明细上报与回填 ----------
+   学习记录原本只在本机 localStorage，换手机/清缓存就是"新人"。
+   这里把每题记录打包上报，登录后再从服务端取回合并 —— 换设备也能把记录找回来。
+   合并规则与后端完全一致：次数类取最大（只增不减），下次复习时间跟随最近作答的那一份。 */
+function packRec(){
+  var out = [];
+  Object.keys(S.rec).forEach(function(id){
+    var r = S.rec[id]; if(!r || !(r.s>0)) return;
+    /* 不能写 r.s|0 —— 位运算会把 13 位时间戳截成 32 位，复习时间就错了 */
+    var n = function(v){ v = +v; return isFinite(v) ? Math.round(v) : 0; };
+    out.push([id, n(r.s), n(r.r), n(r.w), n(r.k), n(r.d), n(r.t)].join(','));
+  });
+  return out.join('|');
+}
+/* 把服务端那份记录合进本地，返回"新补回来多少题"（0 表示本地不变） */
+function unpackRec(str){
+  var added = 0;
+  if(typeof str !== 'string' || !str) return 0;
+  str.split('|').forEach(function(seg){
+    if(!seg) return;
+    var p = seg.split(',');
+    var id = p[0]; if(!id) return;
+    var s = parseInt(p[1],10)||0, r = parseInt(p[2],10)||0, w = parseInt(p[3],10)||0,
+        k = parseInt(p[4],10)||0, d = parseInt(p[5],10)||0, t = parseInt(p[6],10)||0;
+    var o = S.rec[id] || {s:0,r:0,w:0,k:0,d:0,t:0};
+    var newer = t > (o.t||0);
+    var before = o.s||0;
+    S.rec[id] = {
+      s: Math.max(o.s||0, s), r: Math.max(o.r||0, r), w: Math.max(o.w||0, w), k: Math.max(o.k||0, k),
+      t: Math.max(o.t||0, t), d: newer ? d : (o.d || d)
+    };
+    if((S.rec[id].s||0) > before) added++;
+  });
+  return added;
+}
+/* 登录/打开页面时把自己的明细取回来（失败就当没有，不弹窗、不影响使用） */
+function recPull(){
+  if(!API_BASE || !S.user) return;
+  var nm = encodeURIComponent(S.user.name), id6 = encodeURIComponent(S.user.id);
+  fetch(apiUrl('/api/myrec?uname=' + nm + '&id6=' + id6))
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){
+      if(!j || !j.ok || !j.recp) return;
+      var added = unpackRec(j.recp);
+      if(added > 0){
+        saveRec();
+        var v = NAV_CUR;
+        if(v==='home' || v==='wrongs' || v==='stats' || v==='me') go(v, true);
+      }
+    })
+    .catch(function(){});
 }
 function cloudPush(silent){
   if(!S.user) return;
@@ -2830,6 +2884,7 @@ function verCheck(){
       NAV_HIST.length = 0;   /* 免登录直达首页，无历史可返 */
       go('home', true);
       refreshHome();
+      recPull();   /* 免登录直进时也把云端明细合回来（新手机第一次打开就能找回已练记录） */
     }else{
       go('login');
       $('sw-remember').classList.add('on');
