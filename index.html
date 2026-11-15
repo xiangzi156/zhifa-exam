@@ -629,7 +629,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.11.15-2245';
+var APP_VER = '2026.11.15-2310';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -2852,6 +2852,14 @@ function verCheck(){
   try{
     if(location.protocol.indexOf('http')===0 && /\.workbuddy\.host$/i.test(location.hostname) && !/[?&]sharecode=/i.test(location.search)){
       history.replaceState(null, '', location.pathname + '?sharecode=' + SHARECODE);
+    }
+  }catch(e){}
+  /* 短链接自愈：平台访问码 cookie 只管 30 天，到期后裸域名被网关直接回 403「链接不完整」，
+     页面 JS 根本没机会执行。注册 sw.js 后由它截到这个 403、自动补 sharecode 重试并续上 cookie，
+     队员继续用原来的短链接即可。离线版是 file:// 协议，这里自动跳过。 */
+  try{
+    if(SHARECODE && location.protocol==='https:' && 'serviceWorker' in navigator){
+      navigator.serviceWorker.register('sw.js', {scope:'./'}).catch(function(){});
     }
   }catch(e){}
   verCheck();
