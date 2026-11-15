@@ -629,7 +629,7 @@ var TYPE_P = {judge:'p-j', single:'p-s', multi:'p-m', img:'p-m'};
 /* 判断式作答（√/× 按钮）：判断题 + 无选项的识图判断题 */
 function isJudgeLike(q){ return q.type==='judge' || (q.type==='img' && (!q.opts || !q.opts.length)); }
 
-var APP_VER = '2026.11.13-1655';
+var APP_VER = '2026.11.15-2221';
 var S = { user:null, rec:{}, daily:{}, cfg:{perRound:10, goal:50, remember:true}, round:null, idx:0 };
 var lastOpts = {};
 var LS_OK = true;
@@ -1020,7 +1020,7 @@ function refreshHome(){
   var n = S.cfg.perRound;
 
   var quick = [
-    {b:td.n, s:'今日已练'},
+    {b:td.n, s:'今日作答'},
     {b:due, s:'待复习题'},
     {b:(td.g||0)+'/'+5, s:'今日组数·达标5'},
     {b:wrong, s:'错题待巩固'}
@@ -1557,7 +1557,7 @@ function renderStats(){
     + days.map(function(d){
         return '<div class="b"><em>'+(d.n||'')+'</em><i style="height:'+Math.max(3, Math.round(d.n/mx*78))+'px"></i><em>'+d.lbl+'</em></div>';
       }).join('')
-    + '</div><div class="muted" style="margin-top:10px;text-align:center">今日已练 '+td.n+' 题，答对 '+td.r+' 题'
+    + '</div><div class="muted" style="margin-top:10px;text-align:center">今日作答 '+td.n+' 次（同一道题反复练也计数），答对 '+td.r+' 次'
     + '（目标 '+S.cfg.goal+' 题'+(td.n>=S.cfg.goal?'，已达成 ✅':'')+'）</div></div>';
 
   h += '<div class="card"><div class="sec-t">分题型掌握情况</div>'
@@ -1983,7 +1983,8 @@ function admFoot(){
     + '<button class="btn sm ghost" style="flex:1" onclick="adminLogoutTap()">退出登录（清除本机会话）</button>'
     + '<button class="btn sm ghost" style="flex:1" onclick="adminExit()">返回</button></div>'
     + '<div class="muted" style="margin-top:12px;line-height:1.85">'
-    + '· 台账来自云端自动汇总，同一人重复上报会合并取最近一次；结果同时缓存在本机，断网时仍可查看。<br>'
+    + '· 台账来自云端自动汇总，同一人重复上报会合并，各项只增不减（队员换手机、清缓存也不会把已练题数冲回去）；结果同时缓存在本机，断网时仍可查看。<br>'
+    + '· 「已练/总量」是<b>做过的不同题目数</b>；「今日作答」是<b>今天答题的总次数</b>，错题会按遗忘曲线反复练，所以今日作答可能多于已练题数，属正常。<br>'
     + '· 考试榜单：队员交卷自动入榜，开考前点「清空榜单」，考中开启「自动刷新」实时看总分与用时。<br>'
     + '· 掌握分 ≥80 绿色（良好）、50~79 橙色（待提升）、&lt;50 红色（需督促）。<br>'
     + '· 台账含姓名、部门与证件尾号，仅限支队内部管理使用，请勿外传。'
@@ -2000,7 +2001,7 @@ function admTable(rows){
   var depts = Object.keys(byDept).sort(deptCmp);
   var h = '<div class="lt-wrap"><table class="lt"><thead><tr>'
     + '<th>姓名</th><th>部门</th><th>尾号</th><th>已练/总量</th><th>已掌握</th><th>错题</th>'
-    + '<th>正确率</th><th>天</th><th>最近练习</th><th>今日做题</th><th>今日登录</th><th>掌握分</th></tr></thead><tbody>';
+    + '<th>正确率</th><th>天</th><th>最近练习</th><th>今日作答</th><th>今日登录</th><th>掌握分</th></tr></thead><tbody>';
   depts.forEach(function(d){
     var rs = byDept[d].slice().sort(function(a, b){ return b.score - a.score; });
     var avg = Math.round(rs.reduce(function(s, x){ return s + x.score; }, 0) / rs.length);
